@@ -1,0 +1,14 @@
+* text=auto eol=lf
+
+# Treat common binary artifacts as binary
+*.gguf binary
+*.ggml binary
+*.bin binary
+*.idx binary
+*.index binary
+
+# Images (if added later)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary

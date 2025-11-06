@@ -1,0 +1,52 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# VS Code
+.vscode/
+.history/
+
+# Testing/coverage/mypy
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Hugging Face cache (usually user-level; ignore local if present)
+.huggingface/
+.cache/huggingface/
+
+# Project-generated artifacts
+faiss.index
+id_map.json
+
+# Models and data (keep dirs but ignore contents by default)
+models/*
+!models/.gitkeep
+
+data/docs/*
+!data/docs/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
