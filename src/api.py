@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -102,6 +103,16 @@ class QueryResponse(BaseModel):
 class StatusResponse(BaseModel):
     message: str
     details: Optional[Dict[str, Any]] = None
+
+
+# Configure CORS to allow React app to connect
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # --- Endpoints ---

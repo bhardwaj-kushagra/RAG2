@@ -63,6 +63,22 @@ Quick start:
 .\.venv\Scripts\uvicorn.exe src.api:app --host 0.0.0.0 --port 8000
 # API docs at http://localhost:8000/docs
 ```
+
+## Web UI
+
+React-based web interface for demos and presentations. See `docs/WEB_UI_GUIDE.md` for setup.
+
+Quick start:
+```powershell
+# Terminal 1: Start API server
+.\.venv\Scripts\uvicorn.exe src.api:app --host 0.0.0.0 --port 8000
+
+# Terminal 2: Start React dev server
+cd web
+npm install
+npm start
+# Web UI at http://localhost:3000
+```
 ```
 
 Notes:
