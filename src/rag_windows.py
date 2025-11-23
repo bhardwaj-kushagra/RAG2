@@ -459,12 +459,15 @@ def build_index(batch_size: int = 64) -> None:
         convert_to_numpy=True,
         normalize_embeddings=True,  # enables cosine similarity via inner product
     ).astype("float32")
+    # Ensure contiguous memory layout for FAISS (avoids some stub/tooling complaints)
+    embeddings = np.ascontiguousarray(embeddings, dtype="float32")
 
     d = embeddings.shape[1]
     index = faiss.IndexFlatIP(d)  # cosine similarity when vectors are L2-normalized
 
     log("[index] Adding vectors to FAISS index ...")
-    index.add(embeddings)
+    # Pylance stub may mis-report 'missing parameter x'; FAISS Python binding expects (n,d) float32
+    index.add(embeddings)  # type: ignore[arg-type]
 
     try:
         faiss.write_index(index, str(FAISS_INDEX_PATH))
@@ -519,7 +522,10 @@ def retrieve(query: str, top_k: int = 5) -> List[Passage]:
     q_emb = model.encode([query], normalize_embeddings=True, convert_to_numpy=True).astype("float32")
 
     log(f"[retrieve] Searching top-{top_k} passages ...")
-    scores, idxs = index.search(q_emb, top_k)
+    # Ensure query embedding contiguous before search
+    q_emb = np.ascontiguousarray(q_emb, dtype="float32")
+    # Perform search; Pylance may mis-report missing parameters (k, distances, labels)
+    scores, idxs = index.search(q_emb, top_k)  # type: ignore[call-arg]
     hits = idxs[0].tolist()
 
     passages: List[Passage] = []

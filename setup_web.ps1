@@ -59,7 +59,8 @@ $missingDeps = @()
 
 $requiredPackages = @("fastapi", "uvicorn", "pymongo", "faiss", "sentence_transformers", "llama_cpp")
 foreach ($pkg in $requiredPackages) {
-    $check = .\.venv\Scripts\python.exe -c "import $pkg" 2>&1
+    # Attempt import; discard output, rely on exit code
+    .\.venv\Scripts\python.exe -c "import $pkg" 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
         $missingDeps += $pkg
     }
