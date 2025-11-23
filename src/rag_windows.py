@@ -105,6 +105,11 @@ except Exception:
     pd = None
 try:
     import pytesseract  # OCR
+    # Set Tesseract path for Windows if installed in default location
+    import os
+    default_tesseract = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    if os.path.exists(default_tesseract):
+        pytesseract.pytesseract.tesseract_cmd = default_tesseract
 except Exception:
     pytesseract = None
 try:
