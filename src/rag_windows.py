@@ -1,30 +1,4 @@
 #!/usr/bin/env python3
-"""
-A lightweight, fully local RAG pipeline for Windows (CPU-only, no Docker).
-
-Components:
-- MongoDB Community Server (local) for passage storage
-- SentenceTransformers (all-MiniLM-L6-v2) for embeddings
-- FAISS (faiss-cpu) for vector index
-- llama-cpp-python (local .gguf model) for generation
-
-CLI:
-  --ingest           Ingest .txt files from data/docs/ into MongoDB
-  --build-index      Build FAISS index from passages stored in MongoDB
-  --query "..."      Retrieve & generate an answer using local llama.cpp model
-
-File layout (relative to project root):
-  data/docs/          # input .txt files
-  models/model.gguf   # local llama model (you need to place it here)
-  src/rag_windows.py  # this script
-  faiss.index         # saved FAISS index
-  id_map.json         # FAISS index position -> Mongo document mapping
-
-Notes:
-- Assumes MongoDB is running at mongodb://localhost:27017
-- CPU-only: n_gpu_layers=0
-- All paths are Windows-safe (Pathlib)
-"""
 from __future__ import annotations
 
 import argparse
@@ -34,7 +8,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Callable, Iterable
 
 import numpy as np
 from tqdm import tqdm
@@ -113,19 +87,203 @@ def ensure_dirs() -> None:
     (PROJECT_ROOT / "models").mkdir(parents=True, exist_ok=True)
 
 
-def read_txt_files(folder: Path) -> List[Tuple[Path, str]]:
-    files = sorted(folder.glob("*.txt"))
-    results: List[Tuple[Path, str]] = []
-    for fp in files:
+#############################
+# Multi-format ingestion    #
+#############################
+# Optional imports; absence will silently skip related formats.
+try:
+    import PyPDF2  # PDF text extraction
+except Exception:
+    PyPDF2 = None
+try:
+    import docx  # python-docx for .docx
+except Exception:
+    docx = None
+try:
+    import pandas as pd  # csv/xlsx
+except Exception:
+    pd = None
+try:
+    import pytesseract  # OCR
+except Exception:
+    pytesseract = None
+try:
+    from PIL import Image
+except Exception:
+    Image = None
+try:
+    from pdf2image import convert_from_path  # scanned PDF pages to images
+except Exception:
+    convert_from_path = None
+try:
+    import oracledb  # Oracle DB ingestion (optional)
+except Exception:
+    oracledb = None
+import xml.etree.ElementTree as ET
+
+SUPPORTED_FILE_EXT = {
+    ".txt", ".pdf", ".docx", ".csv", ".xlsx", ".json", ".xml",
+    ".png", ".jpg", ".jpeg", ".tif", ".tiff"
+}
+
+def _extract_txt(fp: Path) -> str:
+    try:
+        return fp.read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        log(f"[warn] txt read failed {fp}: {e}")
+        return ""
+
+def _ocr_image(fp: Path) -> str:
+    if pytesseract is None or Image is None:
+        return ""
+    try:
+        img = Image.open(fp)
+        txt = pytesseract.image_to_string(img)
+        return txt.strip()
+    except Exception as e:
+        log(f"[warn] image OCR failed {fp}: {e}")
+        return ""
+
+def _extract_docx(fp: Path) -> str:
+    if docx is None:
+        return ""
+    try:
+        d = docx.Document(str(fp))
+        return "\n".join(p.text for p in d.paragraphs if p.text.strip())
+    except Exception as e:
+        log(f"[warn] docx read failed {fp}: {e}")
+        return ""
+
+def _extract_tabular(fp: Path) -> str:
+    if pd is None:
+        return ""
+    try:
+        if fp.suffix.lower() == ".csv":
+            df = pd.read_csv(fp, dtype=str, keep_default_na=False, encoding="utf-8")
+        else:
+            df = pd.read_excel(fp, dtype=str, keep_default_na=False)
+        rows: List[str] = []
+        for _, row in df.iterrows():
+            vals = [v.strip() for v in row.tolist() if isinstance(v, str) and v.strip()]
+            if vals:
+                rows.append(" | ".join(vals))
+        return "\n".join(rows)
+    except Exception as e:
+        log(f"[warn] tabular read failed {fp}: {e}")
+        return ""
+
+def _extract_json(fp: Path) -> str:
+    try:
+        raw = fp.read_text(encoding="utf-8", errors="ignore")
+        obj = json.loads(raw)
+    except Exception as e:
+        log(f"[warn] json parse failed {fp}: {e}")
+        return ""
+    collected: List[str] = []
+    def walk(x: Any):
+        if isinstance(x, dict):
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+        elif isinstance(x, (str, int, float)):
+            s = str(x).strip()
+            if s:
+                collected.append(s)
+    walk(obj)
+    return "\n".join(collected)
+
+def _extract_xml(fp: Path) -> str:
+    try:
+        tree = ET.parse(fp)
+        root = tree.getroot()
+    except Exception as e:
+        log(f"[warn] xml parse failed {fp}: {e}")
+        return ""
+    texts: List[str] = []
+    for elem in root.iter():
+        if elem.text:
+            t = elem.text.strip()
+            if t:
+                texts.append(t)
+    return "\n".join(texts)
+
+def _ocr_pdf_pages(fp: Path) -> str:
+    if pytesseract is None or convert_from_path is None or Image is None:
+        return ""
+    try:
+        pages = convert_from_path(str(fp))
+    except Exception as e:
+        log(f"[warn] pdf rasterization failed {fp}: {e}")
+        return ""
+    out: List[str] = []
+    for page_img in pages:
         try:
-            text = fp.read_text(encoding="utf-8", errors="ignore")
-            if text.strip():
-                results.append((fp, text))
-            else:
-                log(f"[warn] Skipping empty file: {fp}")
-        except Exception as e:
-            log(f"[warn] Failed to read {fp}: {e}")
-    return results
+            txt = pytesseract.image_to_string(page_img)
+            if txt.strip():
+                out.append(txt)
+        except Exception:
+            continue
+    if out:
+        log(f"[ingest] OCR fallback used for scanned PDF: {fp.name}")
+    return "\n".join(out)
+
+def _extract_pdf(fp: Path) -> str:
+    # Try embedded text first
+    if PyPDF2 is None:
+        return ""
+    parts: List[str] = []
+    try:
+        with fp.open("rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            for page in reader.pages:
+                try:
+                    t = page.extract_text() or ""
+                    if t.strip():
+                        parts.append(t)
+                except Exception:
+                    continue
+    except Exception as e:
+        log(f"[warn] pdf read failed {fp}: {e}")
+        return ""
+    if parts:
+        return "\n".join(parts)
+    # Fallback OCR if no embedded text
+    return _ocr_pdf_pages(fp)
+
+EXTRACTORS: Dict[str, Callable[[Path], str]] = {
+    ".txt": _extract_txt,
+    ".pdf": _extract_pdf,
+    ".docx": _extract_docx,
+    ".csv": _extract_tabular,
+    ".xlsx": _extract_tabular,
+    ".json": _extract_json,
+    ".xml": _extract_xml,
+    ".png": _ocr_image,
+    ".jpg": _ocr_image,
+    ".jpeg": _ocr_image,
+    ".tif": _ocr_image,
+    ".tiff": _ocr_image,
+}
+
+def discover_documents(folder: Path) -> List[Tuple[Path, str]]:
+    out: List[Tuple[Path, str]] = []
+    for fp in sorted(folder.iterdir()):
+        if not fp.is_file():
+            continue
+        ext = fp.suffix.lower()
+        if ext not in SUPPORTED_FILE_EXT:
+            continue
+        extractor = EXTRACTORS.get(ext)
+        if extractor is None:
+            continue
+        text = extractor(fp)
+        if not text.strip():
+            log(f"[warn] Skipping empty/unsupported {fp.name}")
+            continue
+        out.append((fp, text))
+    return out
 
 
 def chunk_text(text: str, chunk_size: int = 250, overlap: int = 50) -> List[str]:
@@ -152,42 +310,110 @@ def chunk_text(text: str, chunk_size: int = 250, overlap: int = 50) -> List[str]
 
 # --- Ingest ---
 
-def ingest_docs() -> None:
+def ingest_files() -> None:
+    """Ingest multi-format documents in data/docs/ into MongoDB."""
     ensure_dirs()
     coll = get_collection()
-
-    log("[ingest] Reading .txt files from data/docs/ ...")
-    docs = read_txt_files(DATA_DIR)
+    log("[ingest] Scanning data/docs/ for txt/pdf/docx/csv/xlsx/json/xml/images ...")
+    docs = discover_documents(DATA_DIR)
     if not docs:
-        log(f"[ingest] No .txt files found in {DATA_DIR}. Place files there and rerun.")
+        log(f"[ingest] No supported files found in {DATA_DIR}")
         return
-
     to_insert: List[Dict[str, Any]] = []
     total_chunks = 0
     for fp, text in docs:
         chunks = chunk_text(text, chunk_size=250, overlap=50)
         for idx, chunk in enumerate(chunks):
             source_id = f"{fp.name}#{idx}"
-            doc = {
+            to_insert.append({
+                "source": fp.name,
                 "source_id": source_id,
-                "file": fp.name,
                 "text": chunk,
                 "created_at": datetime.utcnow(),
-            }
-            to_insert.append(doc)
+            })
         total_chunks += len(chunks)
-
     if not to_insert:
         log("[ingest] No chunks produced from input files.")
         return
-
-    log(f"[ingest] Inserting {len(to_insert)} chunks into MongoDB ...")
+    log(f"[ingest] Inserting {len(to_insert)} chunks ({total_chunks} chunks total) ...")
     try:
-        res = coll.insert_many(to_insert)
-        log(f"[ingest] Inserted {len(res.inserted_ids)} passages into rag_db.passages")
+        coll.insert_many(to_insert)
     except Exception as e:
         log(f"[error] Failed to insert into MongoDB: {e}")
         sys.exit(3)
+    log(f"[ingest] Inserted {total_chunks} chunks from {len(docs)} files into rag_db.passages")
+
+def ingest_oracle(dsn: str, user: str, password: str, query: str) -> None:
+    """Ingest rows from an Oracle table into MongoDB."""
+    if oracledb is None:
+        log("[oracle] oracledb not installed. Run: pip install oracledb")
+        return
+    ensure_dirs()
+    coll = get_collection()
+    try:
+        conn = oracledb.connect(user=user, password=password, dsn=dsn)
+    except Exception as e:
+        log(f"[oracle] Connection failed: {e}")
+        return
+    rows: List[Tuple[Any, ...]] = []
+    try:
+        cur = conn.cursor()
+        cur.execute(query)
+        rows = cur.fetchall()
+    except Exception as e:
+        log(f"[oracle] Query failed: {e}")
+        return
+    inserts: List[Dict[str, Any]] = []
+    for r in rows:
+        try:
+            # Expecting (id, title, body) minimal schema; adapt as needed.
+            doc_id, title, body = r[:3]
+            text = f"{title}\n{body}" if body else str(title)
+            for idx, chunk in enumerate(chunk_text(text)):
+                source_id = f"oracle:{doc_id}#{idx}"
+                inserts.append({
+                    "source": f"oracle:{doc_id}",
+                    "source_id": source_id,
+                    "text": chunk,
+                    "created_at": datetime.utcnow(),
+                })
+        except Exception:
+            continue
+    if inserts:
+        coll.insert_many(inserts)
+    log(f"[oracle] Inserted {len(inserts)} chunks from {len(rows)} rows")
+
+def ingest_mongo_source(uri: str, db_name: str, collection: str, text_field: str = "text", id_field: Optional[str] = None) -> None:
+    """Ingest existing documents from another MongoDB collection.
+    Each document must contain a text_field; optional id_field used for source_id prefix."""
+    ensure_dirs()
+    target = get_collection()
+    try:
+        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+        client.admin.command("ping")
+    except Exception as e:
+        log(f"[mongo-src] Connection failed: {e}")
+        return
+    src_coll = client[db_name][collection]
+    cursor = src_coll.find({},{text_field:1, id_field:1 if id_field else 1})
+    inserts: List[Dict[str, Any]] = []
+    count = 0
+    for doc in cursor:
+        raw = doc.get(text_field, "")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        base = str(doc.get(id_field)) if id_field else str(doc.get("_id"))
+        for idx, chunk in enumerate(chunk_text(raw)):
+            inserts.append({
+                "source": f"mongo:{collection}",
+                "source_id": f"mongo:{base}#{idx}",
+                "text": chunk,
+                "created_at": datetime.utcnow(),
+            })
+            count += 1
+    if inserts:
+        target.insert_many(inserts)
+    log(f"[mongo-src] Inserted {count} chunks from collection {collection}")
 
 
 # --- Build FAISS Index ---
@@ -396,7 +622,20 @@ def generate_answer(question: str, contexts: List[Passage], model_path: Path) ->
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Local RAG on Windows (Mongo + FAISS + SentenceTransformers + llama.cpp)")
-    parser.add_argument("--ingest", action="store_true", help="Ingest .txt files from data/docs into MongoDB")
+    # Ingestion sources
+    parser.add_argument("--ingest-files", action="store_true", help="Ingest supported files (txt,pdf,docx,csv,xlsx,json,xml,images) from data/docs")
+    parser.add_argument("--ingest-oracle", action="store_true", help="Ingest rows from Oracle DB (requires --oracle-dsn --oracle-user --oracle-password)")
+    parser.add_argument("--oracle-dsn", type=str, help="Oracle DSN e.g. host:port/service", default=None)
+    parser.add_argument("--oracle-user", type=str, help="Oracle username", default=None)
+    parser.add_argument("--oracle-password", type=str, help="Oracle password", default=None)
+    parser.add_argument("--oracle-query", type=str, help="Oracle SELECT query returning id,title,body", default="SELECT ID, TITLE, BODY FROM DOCUMENTS")
+    parser.add_argument("--ingest-mongo-source", action="store_true", help="Ingest documents from another MongoDB collection (requires --src-mongo-uri --src-mongo-db --src-mongo-coll)")
+    parser.add_argument("--src-mongo-uri", type=str, default=None, help="Source Mongo URI")
+    parser.add_argument("--src-mongo-db", type=str, default=None, help="Source Mongo DB name")
+    parser.add_argument("--src-mongo-coll", type=str, default=None, help="Source Mongo collection name")
+    parser.add_argument("--src-mongo-text-field", type=str, default="text", help="Field containing text in source docs")
+    parser.add_argument("--src-mongo-id-field", type=str, default=None, help="Optional field used to build source_id")
+    # Existing operations
     parser.add_argument("--build-index", action="store_true", help="Build FAISS index from MongoDB passages")
     parser.add_argument("--query", type=str, default=None, help="Ask a question (retrieval + generation)")
     parser.add_argument("--k", type=int, default=5, help="Top-K passages to retrieve")
@@ -411,12 +650,33 @@ def main() -> None:
     log(" - MongoDB + FAISS + SentenceTransformers + llama.cpp")
     log("========================================")
 
-    if not any([args.ingest, args.build_index, args.query, args.retrieve_only]):
+    if not any([
+        args.ingest_files, args.ingest_oracle, args.ingest_mongo_source,
+        args.build_index, args.query, args.retrieve_only
+    ]):
         parser.print_help()
         return
-
-    if args.ingest:
-        ingest_docs()
+    # Ingest files
+    if args.ingest_files:
+        ingest_files()
+    # Ingest from Oracle
+    if args.ingest_oracle:
+        if not all([args.oracle_dsn, args.oracle_user, args.oracle_password]):
+            log("[oracle] Missing required credentials: --oracle-dsn --oracle-user --oracle-password")
+        else:
+            ingest_oracle(args.oracle_dsn, args.oracle_user, args.oracle_password, args.oracle_query)
+    # Ingest from external Mongo source
+    if args.ingest_mongo_source:
+        if not all([args.src_mongo_uri, args.src_mongo_db, args.src_mongo_coll]):
+            log("[mongo-src] Missing required: --src-mongo-uri --src-mongo-db --src-mongo-coll")
+        else:
+            ingest_mongo_source(
+                uri=args.src_mongo_uri,
+                db_name=args.src_mongo_db,
+                collection=args.src_mongo_coll,
+                text_field=args.src_mongo_text_field,
+                id_field=args.src_mongo_id_field,
+            )
 
     if args.build_index:
         build_index()

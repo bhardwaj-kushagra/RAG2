@@ -42,6 +42,17 @@ python src/rag_windows.py --query "example question"
 
 # (Optional) Retrieval-only test (no llama model needed)
 python src/rag_windows.py --retrieve-only "example question" --k 5
+
+## Full guide
+
+For a detailed, end-to-end explanation (architecture, setup, pipeline internals, tuning, troubleshooting), see:
+
+- docs/PROJECT_GUIDE.md
+
+## Ingestion module reference
+
+Extended ingestion supports txt, pdf (with OCR fallback), docx, csv, xlsx, json, xml, images (png/jpg/jpeg/tiff), Oracle DB rows, and external Mongo collections.
+See `docs/INGESTION_MODULE.md` for setup, optional dependencies, and examples.
 ```
 
 Notes:
