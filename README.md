@@ -53,6 +53,16 @@ For a detailed, end-to-end explanation (architecture, setup, pipeline internals,
 
 Extended ingestion supports txt, pdf (with OCR fallback), docx, csv, xlsx, json, xml, images (png/jpg/jpeg/tiff), Oracle DB rows, and external Mongo collections.
 See `docs/INGESTION_MODULE.md` for setup, optional dependencies, and examples.
+
+## REST API
+
+FastAPI server exposing all RAG capabilities via HTTP endpoints. See `docs/API_GUIDE.md` for setup and usage.
+
+Quick start:
+```powershell
+.\.venv\Scripts\uvicorn.exe src.api:app --host 0.0.0.0 --port 8000
+# API docs at http://localhost:8000/docs
+```
 ```
 
 Notes:
