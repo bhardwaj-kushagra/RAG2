@@ -89,3 +89,4 @@ Write-Host ""
 Write-Host "3. Open browser to: http://localhost:3000" -ForegroundColor White
 Write-Host ""
 Write-Host "See docs/WEB_UI_GUIDE.md for detailed instructions" -ForegroundColor Cyan
+
