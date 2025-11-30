@@ -90,6 +90,7 @@ DB_NAME = "rag_db"
 COLLECTION_NAME = "passages"
 
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"  # auto-downloads on first use
+DEFAULT_CLOUD_MODEL = "gpt-3.5-turbo"  # default model for cloud agent delegation
 
 
 # --- Utilities ---
@@ -405,7 +406,7 @@ def generate_answer(question: str, contexts: List[Passage], model_path: Path) ->
 def generate_answer_cloud(
     question: str, 
     contexts: List[Passage], 
-    cloud_config: Optional[Any] = None
+    cloud_config: "Optional[CloudAgentConfig]" = None
 ) -> str:
     """
     Generate answer using cloud agent delegation.
@@ -455,9 +456,11 @@ def generate_answer_cloud(
         sys.exit(18)
     
     # Ensure citations are visible even if the model forgets inline
-    unique_sources = []
+    unique_sources: List[str] = []
+    seen: set = set()
     for p in contexts:
-        if p.source_id not in unique_sources:
+        if p.source_id not in seen:
+            seen.add(p.source_id)
             unique_sources.append(p.source_id)
     if unique_sources:
         text += "\n\nSources: " + " ".join(f"[{sid}]" for sid in unique_sources)
@@ -481,8 +484,8 @@ def main() -> None:
                         help="Delegate LLM generation to cloud agent instead of local llama.cpp")
     parser.add_argument("--cloud-api-key", type=str, default=None,
                         help="API key for cloud provider (default: uses OPENAI_API_KEY env var)")
-    parser.add_argument("--cloud-model", type=str, default="gpt-3.5-turbo",
-                        help="Cloud model to use (default: gpt-3.5-turbo)")
+    parser.add_argument("--cloud-model", type=str, default=DEFAULT_CLOUD_MODEL,
+                        help=f"Cloud model to use (default: {DEFAULT_CLOUD_MODEL})")
     parser.add_argument("--cloud-base-url", type=str, default=None,
                         help="Custom API base URL for cloud provider (OpenAI-compatible)")
 
@@ -543,7 +546,7 @@ def main() -> None:
             if CLOUD_AGENT_AVAILABLE:
                 # Only create explicit config if user provided CLI options
                 # Otherwise, let the cloud agent use environment variables
-                if args.cloud_api_key or args.cloud_base_url or args.cloud_model != "gpt-3.5-turbo":
+                if args.cloud_api_key or args.cloud_base_url or args.cloud_model != DEFAULT_CLOUD_MODEL:
                     cloud_config = CloudAgentConfig(
                         provider="custom" if args.cloud_base_url else "openai",
                         api_key=args.cloud_api_key,  # Can be None; will fall back to env var
