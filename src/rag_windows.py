@@ -537,15 +537,19 @@ def main() -> None:
 
         # Check if we should delegate to cloud agent
         if args.delegate_to_cloud:
-            # Create cloud config from CLI args
+            # Create cloud config from CLI args if any CLI options were provided
+            # If no CLI options, the cloud agent will use environment variables
             cloud_config = None
-            if CLOUD_AGENT_AVAILABLE and (args.cloud_api_key or args.cloud_base_url):
-                cloud_config = CloudAgentConfig(
-                    provider="custom" if args.cloud_base_url else "openai",
-                    api_key=args.cloud_api_key,
-                    model=args.cloud_model,
-                    base_url=args.cloud_base_url
-                )
+            if CLOUD_AGENT_AVAILABLE:
+                # Only create explicit config if user provided CLI options
+                # Otherwise, let the cloud agent use environment variables
+                if args.cloud_api_key or args.cloud_base_url or args.cloud_model != "gpt-3.5-turbo":
+                    cloud_config = CloudAgentConfig(
+                        provider="custom" if args.cloud_base_url else "openai",
+                        api_key=args.cloud_api_key,  # Can be None; will fall back to env var
+                        model=args.cloud_model,
+                        base_url=args.cloud_base_url
+                    )
             answer = generate_answer_cloud(question, contexts, cloud_config)
         else:
             model_path = Path(args.model_path).resolve()

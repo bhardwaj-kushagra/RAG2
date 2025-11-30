@@ -193,6 +193,9 @@ class CloudAgent:
             **{**self.config.extra_params, **kwargs}
         )
         
+        if not response.choices:
+            raise CloudAgentAPIError("No choices returned from API response")
+        
         return response.choices[0].message.content or ""
     
     def _generate_httpx(
@@ -226,10 +229,30 @@ class CloudAgent:
         
         with httpx.Client(timeout=self.config.timeout) as client:
             response = client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                error_detail = ""
+                try:
+                    error_detail = response.text
+                except Exception:
+                    pass
+                raise CloudAgentAPIError(
+                    f"API request failed with status {response.status_code}: {error_detail}"
+                ) from e
             data = response.json()
-            
-        return data["choices"][0]["message"]["content"] or ""
+        
+        # Validate response structure
+        if not isinstance(data, dict) or "choices" not in data:
+            raise CloudAgentAPIError("Invalid API response format: missing 'choices'")
+        if not data["choices"]:
+            raise CloudAgentAPIError("No choices returned from API response")
+        
+        choice = data["choices"][0]
+        if not isinstance(choice, dict) or "message" not in choice:
+            raise CloudAgentAPIError("Invalid API response format: missing 'message' in choice")
+        
+        return choice["message"].get("content", "") or ""
     
     def is_available(self) -> bool:
         """
