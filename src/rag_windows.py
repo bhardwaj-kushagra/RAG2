@@ -66,6 +66,16 @@ try:
 except Exception:
     Llama = None  # Defer error until query time
 
+# Cloud agent for delegation (optional)
+try:
+    from cloud_agent import CloudAgent, CloudAgentConfig, create_cloud_agent_from_env
+    CLOUD_AGENT_AVAILABLE = True
+except ImportError:
+    CloudAgent = None  # type: ignore
+    CloudAgentConfig = None  # type: ignore
+    create_cloud_agent_from_env = None  # type: ignore
+    CLOUD_AGENT_AVAILABLE = False
+
 
 # --- Constants & Paths ---
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -318,7 +328,7 @@ def retrieve(query: str, top_k: int = 5) -> List[Passage]:
     return passages
 
 
-# --- Generation with llama-cpp-python ---
+# --- Generation with llama-cpp-python or Cloud Agent ---
 
 def _load_llm(model_path: Path, n_ctx: int = 4096) -> Any:
     if Llama is None:
@@ -392,23 +402,100 @@ def generate_answer(question: str, contexts: List[Passage], model_path: Path) ->
     return text
 
 
+def generate_answer_cloud(
+    question: str, 
+    contexts: List[Passage], 
+    cloud_config: Optional[Any] = None
+) -> str:
+    """
+    Generate answer using cloud agent delegation.
+    
+    This function delegates the LLM generation to a cloud-based service
+    instead of using local llama.cpp.
+    
+    Args:
+        question: The user's question
+        contexts: Retrieved passages for context
+        cloud_config: Optional CloudAgentConfig instance
+        
+    Returns:
+        Generated answer text with citations
+    """
+    if not CLOUD_AGENT_AVAILABLE:
+        log("[error] Cloud agent module not available.")
+        log("        Ensure src/cloud_agent.py exists and dependencies are installed.")
+        sys.exit(15)
+    
+    # Create cloud agent from config or environment
+    if cloud_config is not None:
+        agent = CloudAgent(cloud_config)
+    else:
+        agent = create_cloud_agent_from_env()
+        if agent is None:
+            log("[error] Cloud agent not configured.")
+            log("        Set OPENAI_API_KEY environment variable or provide --cloud-api-key")
+            sys.exit(16)
+    
+    if not agent.is_available():
+        log("[error] Cloud agent is not available.")
+        status = agent.get_status()
+        log(f"        Status: {status}")
+        sys.exit(17)
+    
+    prompt = build_prompt(question, contexts)
+    
+    log("[cloud-generate] Delegating to cloud agent ...")
+    log(f"[cloud-generate] Provider: {agent.config.provider}, Model: {agent.config.model}")
+    
+    try:
+        text = agent.generate(prompt, max_tokens=512, stop=["\n\n"])
+        text = text.strip()
+    except Exception as e:
+        log(f"[error] Cloud generation failed: {e}")
+        sys.exit(18)
+    
+    # Ensure citations are visible even if the model forgets inline
+    unique_sources = []
+    for p in contexts:
+        if p.source_id not in unique_sources:
+            unique_sources.append(p.source_id)
+    if unique_sources:
+        text += "\n\nSources: " + " ".join(f"[{sid}]" for sid in unique_sources)
+    
+    return text
+
+
 # --- CLI ---
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Local RAG on Windows (Mongo + FAISS + SentenceTransformers + llama.cpp)")
+    parser = argparse.ArgumentParser(description="Local RAG on Windows (Mongo + FAISS + SentenceTransformers + llama.cpp/Cloud)")
     parser.add_argument("--ingest", action="store_true", help="Ingest .txt files from data/docs into MongoDB")
     parser.add_argument("--build-index", action="store_true", help="Build FAISS index from MongoDB passages")
     parser.add_argument("--query", type=str, default=None, help="Ask a question (retrieval + generation)")
     parser.add_argument("--k", type=int, default=5, help="Top-K passages to retrieve")
     parser.add_argument("--model-path", type=str, default=str(DEFAULT_MODEL_PATH), help="Path to local .gguf model for llama.cpp")
     parser.add_argument("--retrieve-only", type=str, default=None, help="Retrieve top-K passages for a question and print them (no generation)")
+    
+    # Cloud agent delegation options
+    parser.add_argument("--delegate-to-cloud", action="store_true", 
+                        help="Delegate LLM generation to cloud agent instead of local llama.cpp")
+    parser.add_argument("--cloud-api-key", type=str, default=None,
+                        help="API key for cloud provider (default: uses OPENAI_API_KEY env var)")
+    parser.add_argument("--cloud-model", type=str, default="gpt-3.5-turbo",
+                        help="Cloud model to use (default: gpt-3.5-turbo)")
+    parser.add_argument("--cloud-base-url", type=str, default=None,
+                        help="Custom API base URL for cloud provider (OpenAI-compatible)")
 
     args = parser.parse_args()
 
     # Basic banner
     log("========================================")
-    log(" Local RAG (Windows, CPU-only)")
-    log(" - MongoDB + FAISS + SentenceTransformers + llama.cpp")
+    if args.delegate_to_cloud:
+        log(" RAG with Cloud Agent Delegation")
+        log(" - MongoDB + FAISS + SentenceTransformers + Cloud LLM")
+    else:
+        log(" Local RAG (Windows, CPU-only)")
+        log(" - MongoDB + FAISS + SentenceTransformers + llama.cpp")
     log("========================================")
 
     if not any([args.ingest, args.build_index, args.query, args.retrieve_only]):
@@ -448,8 +535,22 @@ def main() -> None:
             log("[query] No context retrieved; cannot generate a helpful answer.")
             return
 
-        model_path = Path(args.model_path).resolve()
-        answer = generate_answer(question, contexts, model_path)
+        # Check if we should delegate to cloud agent
+        if args.delegate_to_cloud:
+            # Create cloud config from CLI args
+            cloud_config = None
+            if CLOUD_AGENT_AVAILABLE and (args.cloud_api_key or args.cloud_base_url):
+                cloud_config = CloudAgentConfig(
+                    provider="custom" if args.cloud_base_url else "openai",
+                    api_key=args.cloud_api_key,
+                    model=args.cloud_model,
+                    base_url=args.cloud_base_url
+                )
+            answer = generate_answer_cloud(question, contexts, cloud_config)
+        else:
+            model_path = Path(args.model_path).resolve()
+            answer = generate_answer(question, contexts, model_path)
+        
         log("\n===== ANSWER =====")
         print(answer)
 

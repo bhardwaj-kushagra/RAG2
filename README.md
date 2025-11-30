@@ -6,6 +6,7 @@ A minimal Retrieval-Augmented Generation pipeline that runs fully locally on Win
 - SentenceTransformers (`all-MiniLM-L6-v2`) for embeddings
 - FAISS (`faiss-cpu`) for similarity search
 - `llama-cpp-python` with a local `.gguf` model for generation
+- **Cloud Agent Delegation** (optional): delegate LLM generation to OpenAI or compatible cloud APIs
 
 No Docker, CPU-only, simple and lightweight.
 
@@ -16,6 +17,7 @@ project_root/
   data/docs/          # .txt files to ingest
   models/model.gguf   # local llama model (place your model here)
   src/rag_windows.py  # main script
+  src/cloud_agent.py  # cloud agent delegation module
   faiss.index         # saved FAISS index (created by --build-index)
   id_map.json         # FAISS -> Mongo mapping (created by --build-index)
 ```
@@ -63,6 +65,52 @@ python src/rag_windows.py --query "..." --k 8
 # Use a different local model path
 python src/rag_windows.py --query "..." --model-path "c:\\path\\to\\your.gguf"
 ```
+
+## Cloud Agent Delegation
+
+Instead of using a local llama.cpp model, you can delegate LLM generation to cloud-based services (OpenAI or compatible APIs). This is useful when:
+
+- You don't have a local model file
+- You want faster generation
+- You need access to more capable models (GPT-4, etc.)
+
+### Setup
+
+1. Install the `openai` package (or `httpx` as a fallback):
+   ```powershell
+   pip install openai
+   # or
+   pip install httpx
+   ```
+
+2. Set your API key as an environment variable:
+   ```powershell
+   $env:OPENAI_API_KEY = "your-api-key-here"
+   ```
+
+### Usage
+
+```powershell
+# Delegate to cloud agent (uses OPENAI_API_KEY from environment)
+python src/rag_windows.py --query "example question" --delegate-to-cloud
+
+# Specify a different model
+python src/rag_windows.py --query "..." --delegate-to-cloud --cloud-model "gpt-4"
+
+# Use a custom API endpoint (OpenAI-compatible)
+python src/rag_windows.py --query "..." --delegate-to-cloud --cloud-base-url "https://your-api.example.com/v1"
+
+# Pass API key directly (not recommended for production)
+python src/rag_windows.py --query "..." --delegate-to-cloud --cloud-api-key "your-key"
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | API key for OpenAI or compatible service |
+| `CLOUD_AGENT_MODEL` | Model to use (default: `gpt-3.5-turbo`) |
+| `CLOUD_AGENT_BASE_URL` | Custom API base URL |
 
 ## Troubleshooting
 
