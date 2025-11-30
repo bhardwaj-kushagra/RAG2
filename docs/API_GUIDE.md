@@ -38,6 +38,13 @@ Ingest all supported files from `data/docs/`:
 Invoke-RestMethod -Uri http://localhost:8000/ingest/files -Method POST
 ```
 
+```powershell
+$uri = "http://localhost:8000/ingest/upload"
+$filePath = "C:\path\to\your\file.pdf"
+Invoke-RestMethod -Uri $uri -Method Post -InFile $filePath -ContentType "multipart/form-data"
+```
+
+
 ### Build Index
 Build FAISS index from MongoDB passages:
 ```powershell

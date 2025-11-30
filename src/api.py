@@ -147,6 +147,37 @@ async def api_ingest_files():
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
 
 
+@app.post("/ingest/upload", response_model=StatusResponse)
+async def api_upload_and_ingest(file: UploadFile = File(...)):
+    """Upload a file and ingest it immediately."""
+    try:
+        # Ensure data/docs exists
+        docs_dir = Path("data/docs")
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save the uploaded file
+        file_path = docs_dir / file.filename
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+            
+        # Trigger ingestion (this will scan the folder, picking up the new file)
+        # In a more advanced setup, we might want to ingest just this file,
+        # but ingest_files() is idempotent-ish (checks hashes/existence usually) or just re-ingests.
+        # Given our current simple implementation, it re-scans.
+        ingest_files()
+        
+        coll = get_collection()
+        count = coll.count_documents({})
+        
+        return StatusResponse(
+            message=f"File '{file.filename}' uploaded and ingested successfully",
+            details={"total_passages": count},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload/Ingestion failed: {e}")
+
+
 @app.post("/ingest/oracle", response_model=StatusResponse)
 async def api_ingest_oracle(req: IngestOracleRequest):
     """Ingest rows from an Oracle database table."""

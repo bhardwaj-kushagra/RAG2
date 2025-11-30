@@ -36,7 +36,7 @@ export const apiService = {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ question, k }),
+      body: JSON.stringify({ query: question, top_k: k }),
     });
     return response.json();
   },
@@ -47,7 +47,7 @@ export const apiService = {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ question, k }),
+      body: JSON.stringify({ query: question, top_k: k }),
     });
     return response.json();
   },
