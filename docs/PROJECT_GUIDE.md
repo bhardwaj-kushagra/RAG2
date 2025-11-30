@@ -183,8 +183,14 @@ Common messages you might see:
 ## Security and privacy
 
 - Everything runs locally: MongoDB, FAISS, embeddings, and the LLM
-- Your documents never leave your machine
-- Be mindful of where your HF cache is stored (user home by default)
+- Your documents never leave your machine during normal operation
+- The embedding model (`all-MiniLM-L6-v2`) and libraries like `sentence-transformers`, `transformers`, `torch`, and `llama-cpp-python` are open source and widely used; they load weights from disk and run pure math on your data (no automatic “phone home” of your documents).
+- Model weights (e.g., `.bin`, `.gguf`) are data blobs, not executable code; only the libraries you install execute. As with any third‑party code, **in theory** a compromised library could exfiltrate data, so treat them like any other dependency.
+- For highly sensitive workloads, you can harden further by:
+  - Downloading models once on a non‑sensitive machine, then copying them offline.
+  - Running this project on a machine/VM with outbound network blocked or strictly firewalled.
+  - Pinning library versions in `requirements.txt` and only installing from trusted sources.
+- Be mindful of where your Hugging Face cache is stored (user home by default) and protect that directory like any other data store.
 
 ## How to extend
 
