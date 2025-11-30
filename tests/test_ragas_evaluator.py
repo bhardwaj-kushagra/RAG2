@@ -96,13 +96,14 @@ class TestLoadTestData:
             }
         ]
         
-        with tempfile.NamedTemporaryFile(
-            mode='w', suffix='.json', delete=False
-        ) as f:
-            json.dump(test_data, f)
-            temp_path = Path(f.name)
-        
+        temp_path = None
         try:
+            with tempfile.NamedTemporaryFile(
+                mode='w', suffix='.json', delete=False
+            ) as f:
+                json.dump(test_data, f)
+                temp_path = Path(f.name)
+            
             samples = load_test_data(temp_path)
             assert len(samples) == 1
             assert samples[0].question == "Test question?"
@@ -110,7 +111,8 @@ class TestLoadTestData:
             assert samples[0].contexts == ["Test context 1", "Test context 2"]
             assert samples[0].ground_truth == "Test ground truth."
         finally:
-            temp_path.unlink()
+            if temp_path and temp_path.exists():
+                temp_path.unlink()
     
     def test_load_test_data_nonexistent_file(self):
         """Test loading with non-existent file falls back to default."""
