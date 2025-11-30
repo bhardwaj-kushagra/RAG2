@@ -69,6 +69,8 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EVAL_DATA_DIR = PROJECT_ROOT / "data" / "eval"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "evaluation_results.json"
+HUGGINGFACE_HOST = "huggingface.co"
+HUGGINGFACE_PORT = 443
 
 
 def log(msg: str) -> None:
@@ -98,11 +100,12 @@ def simple_text_embedding(text: str, dim: int = 128) -> np.ndarray:
     words = text.split()
     
     # Use hashing to create a deterministic vector
+    # Note: Using SHA-256 for better practices, though this is non-cryptographic use
     embedding = np.zeros(dim, dtype=np.float32)
     
     for i, word in enumerate(words):
         # Hash the word with position information
-        h = hashlib.md5(f"{word}_{i % 10}".encode()).hexdigest()
+        h = hashlib.sha256(f"{word}_{i % 10}".encode()).hexdigest()
         # Use hash to set values in embedding
         for j in range(min(dim, len(h))):
             idx = j % dim
@@ -112,7 +115,7 @@ def simple_text_embedding(text: str, dim: int = 128) -> np.ndarray:
     # Also incorporate character n-grams for better coverage
     for i in range(len(text) - 2):
         ngram = text[i:i+3]
-        h = hashlib.md5(ngram.encode()).hexdigest()[:4]
+        h = hashlib.sha256(ngram.encode()).hexdigest()[:4]
         idx = int(h, 16) % dim
         embedding[idx] += 0.1
     
@@ -293,7 +296,7 @@ def get_embedder():
             
             # Check network availability first
             try:
-                socket.create_connection(("huggingface.co", 443), timeout=2)
+                socket.create_connection((HUGGINGFACE_HOST, HUGGINGFACE_PORT), timeout=2)
                 network_available = True
             except (socket.timeout, socket.error, OSError):
                 network_available = False
