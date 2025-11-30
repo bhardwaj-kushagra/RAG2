@@ -35,6 +35,7 @@ dist/
 # Project-generated artifacts
 faiss.index
 id_map.json
+evaluation_results.json
 
 # Models and data (keep dirs but ignore contents by default)
 models/
@@ -42,6 +43,10 @@ models/
 
 data/docs/
 !data/docs/.gitkeep
+
+# Evaluation data
+data/eval/
+!data/eval/.gitkeep
 
 # Logs
 logs/

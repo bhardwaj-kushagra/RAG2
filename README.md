@@ -81,6 +81,27 @@ npm start
 ```
 ```
 
+## RAGAS Evaluation
+
+Evaluate your RAG pipeline using the RAGAS framework. See `docs/RAGAS_EVALUATION_GUIDE.md` for detailed information.
+
+Quick start:
+```powershell
+# Install evaluation dependencies
+pip install ragas datasets sentence-transformers
+
+# Run evaluation
+python src/evaluation.py --evaluate
+
+# Results saved to evaluation_results.json
+```
+
+RAGAS metrics measured:
+- **Faithfulness**: Is the answer grounded in the context?
+- **Answer Relevancy**: Does the answer address the question?
+- **Context Precision**: Are retrieved contexts relevant?
+- **Context Recall**: Do contexts contain needed information?
+
 Notes:
 - MongoDB must be installed and running locally at `mongodb://localhost:27017`.
 - The first time you run embedding it will download the model into the HF cache.
