@@ -55,7 +55,7 @@ COLLECTION_NAME = "passages"
 
 # Embedding configuration: prefer local llama.cpp embeddings if available
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"  # fallback SentenceTransformers model
-EMBED_MODEL_PATH = DEFAULT_MODEL_PATH    # local .gguf used for embeddings via llama.cpp
+EMBED_MODEL_PATH = MODELS_DIR / "all-MiniLM-L6-v2.Q4_K_M.gguf"  # local embedding .gguf
 
 
 # --- Utilities ---
