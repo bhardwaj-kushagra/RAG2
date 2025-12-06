@@ -53,7 +53,9 @@ MONGO_URI = "mongodb://localhost:27017"
 DB_NAME = "rag_db"
 COLLECTION_NAME = "passages"
 
-EMBED_MODEL_NAME = "all-MiniLM-L6-v2"  # auto-downloads on first use
+# Embedding configuration: prefer local llama.cpp embeddings if available
+EMBED_MODEL_NAME = "all-MiniLM-L6-v2"  # fallback SentenceTransformers model
+EMBED_MODEL_PATH = DEFAULT_MODEL_PATH    # local .gguf used for embeddings via llama.cpp
 
 
 # --- Utilities ---
@@ -423,33 +425,102 @@ def ingest_mongo_source(uri: str, db_name: str, collection: str, text_field: str
 
 # --- Build FAISS Index ---
 
-def _load_embedder() -> SentenceTransformer:
-    log(f"[index] Loading embedding model: {EMBED_MODEL_NAME} (first run may download) ...")
+def _load_embedder():
+    """
+    Return an embedder with an .encode(texts, normalize_embeddings=True, convert_to_numpy=True) API.
+
+    Preference order:
+      1) Local llama.cpp embedding using EMBED_MODEL_PATH (.gguf) via llama-cpp-python
+      2) SentenceTransformers model (fallback)
+    """
+    # Try llama.cpp embeddings first if Llama is available and model file exists
+    if Llama is not None and EMBED_MODEL_PATH.exists():
+        try:
+            log(f"[index] Loading local llama.cpp model for embeddings: {EMBED_MODEL_PATH} ...")
+            llm = Llama(model_path=str(EMBED_MODEL_PATH), n_ctx=2048, embedding=True)
+
+            class LlamaEmbedder:
+                def encode(self, texts: List[str], normalize_embeddings: bool = True, convert_to_numpy: bool = True, **kwargs):
+                    vecs: List[np.ndarray] = []
+                    for t in texts:
+                        out = llm.create_embedding(t)
+                        emb = np.array(out["data"][0]["embedding"], dtype="float32")
+                        if normalize_embeddings:
+                            n = np.linalg.norm(emb)
+                            if n > 0:
+                                emb = emb / n
+                        vecs.append(emb)
+                    arr = np.vstack(vecs)
+                    return arr if convert_to_numpy else arr.tolist()
+
+            log("[index] Using llama.cpp for embeddings")
+            return LlamaEmbedder()
+        except Exception as e:
+            log(f"[index] Failed to initialize llama.cpp embeddings, falling back: {e}")
+
+    # Fallback: SentenceTransformers
+    log(f"[index] Loading embedding model: {EMBED_MODEL_NAME} (may download on first use) ...")
     model = SentenceTransformer(EMBED_MODEL_NAME)
     return model
 
 
-def build_index(batch_size: int = 64) -> None:
+def build_index(batch_size: int = 64, incremental: bool = True) -> None:
+    """Build or extend the FAISS index.
+
+    If incremental is True and existing artifacts (faiss.index, id_map.json) exist,
+    only new MongoDB passages (those whose _id is not already present) are embedded
+    and appended. Otherwise a full rebuild is performed.
+    """
     ensure_dirs()
     coll = get_collection()
 
+    existing_ids: Set[str] = set()
+    id_map: List[Dict[str, str]] = []
+    index: Optional[faiss.Index] = None
+
+    use_incremental = incremental and FAISS_INDEX_PATH.exists() and ID_MAP_PATH.exists()
+    if use_incremental:
+        try:
+            # Load existing index & id map
+            index = faiss.read_index(str(FAISS_INDEX_PATH))
+            raw_map = json.loads(ID_MAP_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw_map, list):
+                for entry in raw_map:
+                    if isinstance(entry, dict) and "mongo_id" in entry:
+                        mid = entry.get("mongo_id")
+                        if mid:
+                            existing_ids.add(mid)
+                id_map = raw_map  # continue extending
+            log(f"[index] Loaded existing index with {len(id_map)} vectors for incremental update.")
+        except Exception as e:
+            log(f"[index] Failed to load existing index/id_map; falling back to full rebuild: {e}")
+            use_incremental = False  # force full rebuild
+
+    # Query passages: all if full rebuild else only new ones
     log("[index] Fetching passages from MongoDB ...")
+    mongo_query: Dict[str, Any] = {}
+    if use_incremental and existing_ids:
+        # Exclude already indexed ids
+        mongo_query = {"_id": {"$nin": [ObjectId(x) for x in existing_ids]}}
+
     try:
-        cursor = coll.find({}, {"text": 1, "source_id": 1})
+        cursor = coll.find(mongo_query, {"text": 1, "source_id": 1})
         passages = list(cursor)
     except Exception as e:
         log(f"[error] Failed to query MongoDB: {e}")
         sys.exit(4)
 
     if not passages:
-        log("[index] No passages found. Run --ingest first.")
+        if use_incremental:
+            log("[index] No new passages to add. Index is up to date.")
+        else:
+            log("[index] No passages found. Run --ingest first.")
         return
 
     texts = [p.get("text", "") for p in passages]
     src_ids = [p.get("source_id", "") for p in passages]
     mongo_ids = [str(p.get("_id")) for p in passages]
 
-    # Compute embeddings
     model = _load_embedder()
     log("[index] Encoding passages (normalized embeddings, cosine via inner product) ...")
     embeddings = model.encode(
@@ -457,16 +528,19 @@ def build_index(batch_size: int = 64) -> None:
         batch_size=batch_size,
         show_progress_bar=True,
         convert_to_numpy=True,
-        normalize_embeddings=True,  # enables cosine similarity via inner product
+        normalize_embeddings=True,
     ).astype("float32")
-    # Ensure contiguous memory layout for FAISS (avoids some stub/tooling complaints)
     embeddings = np.ascontiguousarray(embeddings, dtype="float32")
 
-    d = embeddings.shape[1]
-    index = faiss.IndexFlatIP(d)  # cosine similarity when vectors are L2-normalized
+    if index is None:
+        # Full rebuild path
+        d = embeddings.shape[1]
+        index = faiss.IndexFlatIP(d)
+        log("[index] Creating new FAISS index ...")
+    else:
+        log("[index] Appending to existing FAISS index ...")
 
-    log("[index] Adding vectors to FAISS index ...")
-    # Pylance stub may mis-report 'missing parameter x'; FAISS Python binding expects (n,d) float32
+    # Add vectors
     index.add(embeddings)  # type: ignore[arg-type]
 
     try:
@@ -475,16 +549,17 @@ def build_index(batch_size: int = 64) -> None:
         log(f"[error] Failed to write FAISS index to {FAISS_INDEX_PATH}: {e}")
         sys.exit(5)
 
-    id_map = [
-        {"mongo_id": mid, "source_id": sid}
-        for mid, sid in zip(mongo_ids, src_ids)
-    ]
+    # Extend mapping in same order
+    for mid, sid in zip(mongo_ids, src_ids):
+        id_map.append({"mongo_id": mid, "source_id": sid})
     try:
         ID_MAP_PATH.write_text(json.dumps(id_map, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as e:
         log(f"[error] Failed to write id_map.json: {e}")
         sys.exit(6)
 
+    action_word = "Appended" if use_incremental else "Built"
+    log(f"[index] {action_word} {len(mongo_ids)} passages. Total vectors = {len(id_map)}")
     log(f"[index] Saved index -> {FAISS_INDEX_PATH}")
     log(f"[index] Saved id_map -> {ID_MAP_PATH}")
 
@@ -647,10 +722,12 @@ def main() -> None:
     parser.add_argument("--src-mongo-text-field", type=str, default="text", help="Field containing text in source docs")
     parser.add_argument("--src-mongo-id-field", type=str, default=None, help="Optional field used to build source_id")
     # Existing operations
-    parser.add_argument("--build-index", action="store_true", help="Build FAISS index from MongoDB passages")
+    parser.add_argument("--build-index", action="store_true", help="Build or extend FAISS index from MongoDB passages (incremental by default)")
+    parser.add_argument("--no-incremental", action="store_true", help="Force full rebuild of FAISS index instead of incremental append")
     parser.add_argument("--query", type=str, default=None, help="Ask a question (retrieval + generation)")
     parser.add_argument("--k", type=int, default=5, help="Top-K passages to retrieve")
     parser.add_argument("--model-path", type=str, default=str(DEFAULT_MODEL_PATH), help="Path to local .gguf model for llama.cpp")
+    parser.add_argument("--embed-model-path", type=str, default=str(EMBED_MODEL_PATH), help="Path to local .gguf used for embeddings (llama.cpp)")
     parser.add_argument("--retrieve-only", type=str, default=None, help="Retrieve top-K passages for a question and print them (no generation)")
 
     args = parser.parse_args()
@@ -690,7 +767,12 @@ def main() -> None:
             )
 
     if args.build_index:
-        build_index()
+        # Update embedding model path if provided (avoid Python 'global' redeclare issue)
+        new_embed_path = Path(args.embed_model_path).resolve()
+        import importlib
+        m = importlib.import_module(__name__)
+        setattr(m, "EMBED_MODEL_PATH", new_embed_path)
+        build_index(incremental=not args.no_incremental)
 
     if args.retrieve_only is not None:
         question = args.retrieve_only.strip()

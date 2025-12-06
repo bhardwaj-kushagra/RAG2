@@ -65,12 +65,21 @@ except ImportError:
     ChatOpenAI = None
     OpenAIEmbeddings = None
 
+# Optional local embeddings via llama.cpp
+LLAMA_CPP_AVAILABLE = False
+try:
+    from llama_cpp import Llama  # type: ignore
+    LLAMA_CPP_AVAILABLE = True
+except Exception:
+    LLAMA_CPP_AVAILABLE = False
+
 # --- Constants & Paths ---
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EVAL_DATA_DIR = PROJECT_ROOT / "data" / "eval"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "evaluation_results.json"
 HUGGINGFACE_HOST = "huggingface.co"
 HUGGINGFACE_PORT = 443
+DEFAULT_EMBED_MODEL_PATH = PROJECT_ROOT / "models" / "model.gguf"
 
 
 def log(msg: str) -> None:
@@ -275,7 +284,7 @@ def create_evaluation_dataset(samples: List[EvaluationSample]):
     return Dataset.from_dict(data)
 
 
-def get_embedder():
+def get_embedder(embed_model_path: Optional[Path] = None):
     """
     Get the best available embedder.
     
@@ -287,6 +296,31 @@ def get_embedder():
     # Check if offline mode is forced
     offline_mode = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
     
+    # Try local llama.cpp embeddings first if available
+    if LLAMA_CPP_AVAILABLE:
+        model_path = embed_model_path or DEFAULT_EMBED_MODEL_PATH
+        if model_path.exists():
+            try:
+                log(f"[evaluation] Using local llama.cpp embeddings: {model_path}")
+                llm = Llama(model_path=str(model_path), n_ctx=2048, embedding=True)
+
+                class LlamaEmbedder:
+                    def encode(self, texts: List[str], normalize_embeddings: bool = True):
+                        vecs: List[np.ndarray] = []
+                        for t in texts:
+                            out = llm.create_embedding(t)
+                            emb = np.array(out["data"][0]["embedding"], dtype="float32")
+                            if normalize_embeddings:
+                                n = np.linalg.norm(emb)
+                                if n > 0:
+                                    emb = emb / n
+                            vecs.append(emb)
+                        return np.vstack(vecs)
+
+                return LlamaEmbedder()
+            except Exception as e:
+                log(f"[evaluation] Failed to init llama.cpp embeddings, falling back: {e}")
+
     if not offline_mode and SENTENCE_TRANSFORMERS_AVAILABLE:
         try:
             # Set a short timeout for network requests
@@ -318,7 +352,7 @@ def get_embedder():
     return SimpleEmbedder(dim=128)
 
 
-def run_evaluation_simple(samples: Optional[List[EvaluationSample]] = None) -> Dict[str, Any]:
+def run_evaluation_simple(samples: Optional[List[EvaluationSample]] = None, embed_model_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Run a simplified RAGAS-style evaluation without requiring an LLM API key.
     
@@ -339,7 +373,7 @@ def run_evaluation_simple(samples: Optional[List[EvaluationSample]] = None) -> D
     
     # Load embedding model (with fallback)
     log("[evaluation] Loading embedding model...")
-    embedder = get_embedder()
+    embedder = get_embedder(Path(embed_model_path) if embed_model_path else None)
     
     # Compute metrics based on embedding similarity
     results = {
@@ -566,6 +600,12 @@ Examples:
         help="Run RAGAS evaluation on sample data"
     )
     parser.add_argument(
+        "--embed-model-path",
+        type=str,
+        default=str(DEFAULT_EMBED_MODEL_PATH),
+        help="Path to local .gguf used for embeddings (llama.cpp)"
+    )
+    parser.add_argument(
         "--full",
         action="store_true",
         help="Use full RAGAS evaluation with LLM (requires OPENAI_API_KEY)"
@@ -592,7 +632,7 @@ Examples:
     if args.full:
         results = run_evaluation_with_ragas()
     else:
-        results = run_evaluation_simple()
+        results = run_evaluation_simple(embed_model_path=args.embed_model_path)
         results["evaluation_type"] = "simplified"
     
     # Print results

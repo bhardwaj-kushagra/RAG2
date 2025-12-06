@@ -177,6 +177,22 @@ sample = EvaluationSample(
 results = run_evaluation_simple([sample])
 ```
 
+## Incremental Indexing Note
+
+Your FAISS index build step now supports incremental updates by appending only new MongoDB passages. For best evaluation fidelity:
+
+- Re-run `--build-index` after ingesting new documents so retrieval reflects the latest corpus.
+- Use `--no-incremental` occasionally (e.g., weekly) to fully rebuild and defragment ordering.
+- Improved recall from fresh index updates should raise Context Recall and Faithfulness scores over time.
+
+Example:
+```bash
+python src/rag_windows.py --ingest-files
+python src/rag_windows.py --build-index          # incremental append
+python src/evaluation.py --evaluate              # simplified metrics
+OPENAI_API_KEY=sk-... python src/evaluation.py --evaluate --full  # full RAGAS
+```
+
 ## API Reference
 
 ### CLI Arguments
@@ -212,17 +228,13 @@ HF_HUB_OFFLINE=1 python src/evaluation.py --evaluate
 ## Troubleshooting
 
 ### "Network unavailable" message
-- The module detected no internet access and is using the fallback embedder
-- This is normal in isolated environments; results are still valid
 
 ### "OPENAI_API_KEY not found"
-- For full RAGAS evaluation, set your OpenAI API key:
   ```bash
   export OPENAI_API_KEY=sk-your-key
   ```
 
 ### Import errors
-- Make sure all dependencies are installed:
   ```bash
   pip install ragas datasets sentence-transformers numpy
   ```
@@ -230,5 +242,3 @@ HF_HUB_OFFLINE=1 python src/evaluation.py --evaluate
 ## References
 
 - [RAGAS Documentation](https://docs.ragas.io/)
-- [RAGAS GitHub Repository](https://github.com/explodinggradients/ragas)
-- [RAGAS Paper](https://arxiv.org/abs/2309.15217)
