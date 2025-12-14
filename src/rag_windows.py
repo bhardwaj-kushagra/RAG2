@@ -54,8 +54,10 @@ DB_NAME = "rag_db"
 COLLECTION_NAME = "passages"
 
 # Embedding configuration: prefer local llama.cpp embeddings if available
-EMBED_MODEL_NAME = "all-MiniLM-L6-v2"  # fallback SentenceTransformers model
-EMBED_MODEL_PATH = MODELS_DIR / "all-MiniLM-L6-v2.Q4_K_M.gguf"  # local embedding .gguf
+# Default to the local nomic-embed-text-v1.5 GGUF model, with a
+# SentenceTransformers model as a fallback when the GGUF is missing.
+EMBED_MODEL_NAME = "nomic-embed-text-v1.5"  # fallback SentenceTransformers model name
+EMBED_MODEL_PATH = MODELS_DIR / "nomic-embed-text-v1.5.Q4_K_M.gguf"  # local embedding .gguf
 
 
 # --- Utilities ---

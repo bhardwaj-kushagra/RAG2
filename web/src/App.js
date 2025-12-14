@@ -226,7 +226,7 @@ function App() {
               <div className="section">
                 <h3>Build FAISS Index</h3>
                 <p>
-                  Build a vector index from all passages stored in MongoDB. This creates embeddings using SentenceTransformers and builds a FAISS index for fast similarity search.
+                  Build a vector index from all passages stored in MongoDB. This creates embeddings using your local llama.cpp embedding model (with a SentenceTransformers fallback) and builds a FAISS index for fast similarity search.
                 </p>
 
                 <div className="info-box">

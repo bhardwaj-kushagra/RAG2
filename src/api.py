@@ -168,9 +168,11 @@ async def api_upload_and_ingest(file: UploadFile = File(...)):
         # Ensure data/docs exists
         docs_dir = Path("data/docs")
         docs_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save the uploaded file
-        file_path = docs_dir / file.filename
+
+        # Save the uploaded file (UploadFile.filename can be None in types,
+        # so coerce it to a non-empty string for path operations)
+        filename = file.filename or "uploaded_file"
+        file_path = docs_dir / filename
         with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
@@ -185,7 +187,7 @@ async def api_upload_and_ingest(file: UploadFile = File(...)):
         count = coll.count_documents({})
         
         return StatusResponse(
-            message=f"File '{file.filename}' uploaded and ingested successfully",
+            message=f"File '{filename}' uploaded and ingested successfully",
             details={"total_passages": count},
         )
     except Exception as e:
@@ -291,8 +293,24 @@ async def api_agent(req: AgentRequest):
 
     try:
         model_path = Path(req.model_path) if req.model_path else DEFAULT_MODEL_PATH
-        # agent.run_agent already logs the detected mode
-        answer = agent_module.run_agent(goal=goal, model_path=model_path, k=req.top_k)
+        # agent.run_agent already logs the detected mode. Wrap it so that
+        # even "fatal" errors (like sys.exit or unexpected exceptions inside
+        # rag_windows) become a safe text response instead of crashing or 500s.
+        try:
+            answer = agent_module.run_agent(goal=goal, model_path=model_path, k=req.top_k)
+        except BaseException as inner_exc:  # catches SystemExit, KeyboardInterrupt, etc.
+            import traceback
+
+            tb_str = "".join(traceback.format_exception(type(inner_exc), inner_exc, inner_exc.__traceback__))
+            print(f"[api_agent] Inner agent error: {repr(inner_exc)}", flush=True)
+            print(tb_str, flush=True)
+            err_type = type(inner_exc).__name__
+            # Provide a graceful textual answer instead of propagating the error
+            answer = (
+                f"The agent failed internally while handling this goal. "
+                f"Error type: {err_type}. Details: {inner_exc}. "
+                "Check the server logs for a full traceback."
+            )
 
         # For now, we don't expose the exact mode from agent internals,
         # so we approximate from the text; this can be refined later.
@@ -308,9 +326,17 @@ async def api_agent(req: AgentRequest):
 
         return AgentResponse(goal=goal, mode=mode, answer=answer)
     except HTTPException:
+        # Let FastAPI handle HTTP errors as-is
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent request failed: {e}")
+        # Log full error information to help debug outer /agent failures
+        import traceback
+
+        tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+        print(f"[api_agent] Unexpected error in /agent wrapper: {repr(e)}", flush=True)
+        print(tb_str, flush=True)
+        err_type = type(e).__name__
+        raise HTTPException(status_code=500, detail=f"Agent request failed ({err_type}): {e}")
 
 
 # --- Run Server ---
