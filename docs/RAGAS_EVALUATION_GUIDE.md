@@ -62,7 +62,7 @@ python src/evaluation.py --evaluate --output my_results.json
 
 ### Example Output
 
-```
+```text
 ============================================================
            RAGAS EVALUATION RESULTS
 ============================================================
@@ -137,18 +137,22 @@ results = run_evaluation_simple(samples)
 ## Improving Your Scores
 
 ### Low Faithfulness Score
+
 - Your answers may contain information not in the retrieved context
 - Solution: Tune your prompt to emphasize using only the provided context
 
 ### Low Answer Relevancy Score
+
 - Answers don't directly address the questions
 - Solution: Improve your prompt to focus on answering the specific question
 
 ### Low Context Precision Score
+
 - Retrieved documents aren't relevant to queries
 - Solution: Improve your embedding model or retrieval parameters (e.g., top-K)
 
 ### Low Context Recall Score
+
 - Retrieved documents don't contain needed information
 - Solution: Add more documents to your knowledge base, improve chunking strategy
 
@@ -186,6 +190,7 @@ Your FAISS index build step now supports incremental updates by appending only n
 - Improved recall from fresh index updates should raise Context Recall and Faithfulness scores over time.
 
 Example:
+
 ```bash
 python src/rag_windows.py --ingest-files
 python src/rag_windows.py --build-index          # incremental append
@@ -230,14 +235,16 @@ HF_HUB_OFFLINE=1 python src/evaluation.py --evaluate
 ### "Network unavailable" message
 
 ### "OPENAI_API_KEY not found"
-  ```bash
-  export OPENAI_API_KEY=sk-your-key
-  ```
+
+```bash
+export OPENAI_API_KEY=sk-your-key
+```
 
 ### Import errors
-  ```bash
-  pip install ragas datasets sentence-transformers numpy
-  ```
+
+```bash
+pip install ragas datasets sentence-transformers numpy
+```
 
 ## References
 

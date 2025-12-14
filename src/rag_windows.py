@@ -474,7 +474,7 @@ def build_index(batch_size: int = 64, incremental: bool = True) -> None:
     ensure_dirs()
     coll = get_collection()
 
-    existing_ids: Set[str] = set()
+    existing_ids: set[str] = set()
     id_map: List[Dict[str, str]] = []
     index: Optional[faiss.Index] = None
 
