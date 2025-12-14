@@ -8,6 +8,7 @@ Endpoints:
 - POST /build-index        : Build FAISS index
 - POST /retrieve           : Retrieve top-K passages (no generation)
 - POST /query              : Full RAG query with generation
+- POST /agent              : Run agentic AI over RAG + DB tools
 - GET  /health             : Health check
 """
 from __future__ import annotations
@@ -36,6 +37,7 @@ from rag_windows import (
     Passage,
     DEFAULT_MODEL_PATH,
 )
+import agent as agent_module
 
 app = FastAPI(
     title="Local RAG API",
@@ -82,6 +84,18 @@ class QueryRequest(BaseModel):
     query: str = Field(..., description="Question text")
     top_k: int = Field(default=5, ge=1, le=100, description="Number of passages to retrieve")
     model_path: Optional[str] = Field(default=None, description="Path to .gguf model (optional)")
+
+
+class AgentRequest(BaseModel):
+    goal: str = Field(..., description="High-level agent goal (e.g., 'Run a quick RAG evaluation', 'Summarize docs about X')")
+    top_k: int = Field(default=5, ge=1, le=20, description="Number of passages to retrieve in search_summarize mode")
+    model_path: Optional[str] = Field(default=None, description="Path to .gguf model (optional)")
+
+
+class AgentResponse(BaseModel):
+    goal: str
+    mode: str
+    answer: str
 
 
 class PassageResponse(BaseModel):
@@ -246,6 +260,7 @@ async def api_query(req: QueryRequest):
             raise HTTPException(status_code=404, detail="No relevant passages found")
 
         model_path = Path(req.model_path) if req.model_path else DEFAULT_MODEL_PATH
+        # Use non-streaming generation for HTTP API
         answer = generate_answer(req.query, passages, model_path)
 
         # Extract sources
@@ -260,6 +275,42 @@ async def api_query(req: QueryRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {e}")
+
+
+@app.post("/agent", response_model=AgentResponse)
+async def api_agent(req: AgentRequest):
+    """Run the lightweight agent over RAG + DB tools.
+
+    This wraps agent.run_agent so the web UI (and other clients)
+    can trigger evaluation, note-taking, DB inspection, or
+    search+summarize flows.
+    """
+    goal = req.goal.strip()
+    if not goal:
+        raise HTTPException(status_code=400, detail="Agent goal must not be empty")
+
+    try:
+        model_path = Path(req.model_path) if req.model_path else DEFAULT_MODEL_PATH
+        # agent.run_agent already logs the detected mode
+        answer = agent_module.run_agent(goal=goal, model_path=model_path, k=req.top_k)
+
+        # For now, we don't expose the exact mode from agent internals,
+        # so we approximate from the text; this can be refined later.
+        lower = goal.lower()
+        if any(kw in lower for kw in ["ragas", "evaluation", "rag quality", "run evaluation"]):
+            mode = "evaluation"
+        elif any(kw in lower for kw in ["note", "todo", "task", "remind", "remember"]):
+            mode = "note"
+        elif any(kw in lower for kw in ["inspect db", "inspect database", "raw db", "raw documents", "rag_db.passages"]):
+            mode = "inspect_db"
+        else:
+            mode = "search_summarize"
+
+        return AgentResponse(goal=goal, mode=mode, answer=answer)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Agent request failed: {e}")
 
 
 # --- Run Server ---

@@ -675,23 +675,64 @@ def build_prompt(question: str, contexts: List[Passage]) -> str:
     return prompt
 
 
-def generate_answer(question: str, contexts: List[Passage], model_path: Path) -> str:
+def generate_answer(
+    question: str,
+    contexts: List[Passage],
+    model_path: Path,
+    max_tokens: int = 256,
+    stream_to_stdout: bool = False,
+) -> str:
+    """Generate an answer from the LLM.
+
+    max_tokens is kept modest by default so CPU-only inference
+    returns in a reasonable time on typical machines.
+
+    When stream_to_stdout is True, tokens are printed to stdout
+    as they are generated (useful for CLI); the full text is still
+    returned for callers that need it.
+    """
     llm = _load_llm(model_path)
     prompt = build_prompt(question, contexts)
 
-    log("[generate] Generating answer ...")
-    try:
-        out = llm.create_completion(
-            prompt=prompt,
-            max_tokens=512,
-            temperature=0.2,
-            top_p=0.9,
-            stop=["\n\n"],  # stop at a blank line to keep it tight
-        )
-        text = out["choices"][0]["text"].strip()
-    except Exception as e:
-        log(f"[error] Generation failed: {e}")
-        sys.exit(14)
+    effective_max_tokens = max(16, int(max_tokens) if max_tokens else 256)
+
+    if stream_to_stdout:
+        log("[generate] Generating answer (streaming) ...")
+        print("\n===== ANSWER =====\n", end="", flush=True)
+        pieces: List[str] = []
+        try:
+            stream = llm.create_completion(
+                prompt=prompt,
+                max_tokens=effective_max_tokens,
+                temperature=0.2,
+                top_p=0.9,
+                stop=["\n\n"],
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk["choices"][0].get("text", "")
+                if not delta:
+                    continue
+                pieces.append(delta)
+                print(delta, end="", flush=True)
+        except Exception as e:
+            log(f"[error] Generation failed: {e}")
+            sys.exit(14)
+        text = "".join(pieces).strip()
+    else:
+        log("[generate] Generating answer ...")
+        try:
+            out = llm.create_completion(
+                prompt=prompt,
+                max_tokens=effective_max_tokens,
+                temperature=0.2,
+                top_p=0.9,
+                stop=["\n\n"],  # stop at a blank line to keep it tight
+            )
+            text = out["choices"][0]["text"].strip()
+        except Exception as e:
+            log(f"[error] Generation failed: {e}")
+            sys.exit(14)
 
     # Ensure citations are visible even if the model forgets inline
     unique_sources = []
@@ -699,7 +740,10 @@ def generate_answer(question: str, contexts: List[Passage], model_path: Path) ->
         if p.source_id not in unique_sources:
             unique_sources.append(p.source_id)
     if unique_sources:
-        text += "\n\nSources: " + " ".join(f"[{sid}]" for sid in unique_sources)
+        sources_line = "\n\nSources: " + " ".join(f"[{sid}]" for sid in unique_sources)
+        text += sources_line
+        if stream_to_stdout:
+            print(sources_line, end="", flush=True)
 
     return text
 
@@ -729,6 +773,8 @@ def main() -> None:
     parser.add_argument("--model-path", type=str, default=str(DEFAULT_MODEL_PATH), help="Path to local .gguf model for llama.cpp")
     parser.add_argument("--embed-model-path", type=str, default=str(EMBED_MODEL_PATH), help="Path to local .gguf used for embeddings (llama.cpp)")
     parser.add_argument("--retrieve-only", type=str, default=None, help="Retrieve top-K passages for a question and print them (no generation)")
+    parser.add_argument("--agent", type=str, default=None, help="Run a small agent over tools (search_docs, get_raw_from_db, write_note_to_db) for a high-level goal")
+    parser.add_argument("--max-tokens", type=int, default=256, help="Maximum tokens to generate for the answer (smaller is faster)")
 
     args = parser.parse_args()
 
@@ -740,7 +786,7 @@ def main() -> None:
 
     if not any([
         args.ingest_files, args.ingest_oracle, args.ingest_mongo_source,
-        args.build_index, args.query, args.retrieve_only
+        args.build_index, args.query, args.retrieve_only, args.agent
     ]):
         parser.print_help()
         return
@@ -789,6 +835,20 @@ def main() -> None:
             preview = (p.text[:400] + "...") if len(p.text) > 400 else p.text
             print(f"[{p.source_id}]\n{preview}\n")
 
+    if args.agent is not None:
+        goal = args.agent.strip()
+        if not goal:
+            log("[agent] Empty goal string.")
+            return
+
+        import agent as agent_module
+
+        log(f"[agent] Running agent for goal: {goal}")
+        model_path = Path(args.model_path).resolve()
+        answer = agent_module.run_agent(goal=goal, model_path=model_path)
+        log("\n===== AGENT ANSWER =====")
+        print(answer)
+
     if args.query is not None:
         question = args.query.strip()
         if not question:
@@ -802,9 +862,8 @@ def main() -> None:
             return
 
         model_path = Path(args.model_path).resolve()
-        answer = generate_answer(question, contexts, model_path)
-        log("\n===== ANSWER =====")
-        print(answer)
+        # Stream tokens directly to stdout for CLI usage
+        generate_answer(question, contexts, model_path, max_tokens=args.max_tokens, stream_to_stdout=True)
 
 
 if __name__ == "__main__":

@@ -51,4 +51,15 @@ export const apiService = {
     });
     return response.json();
   },
+
+  async runAgent(goal, k = 5) {
+    const response = await fetch(`${API_BASE_URL}/agent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ goal, top_k: k }),
+    });
+    return response.json();
+  },
 };

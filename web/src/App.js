@@ -13,6 +13,8 @@ function App() {
   // Query state
   const [question, setQuestion] = useState('');
   const [topK, setTopK] = useState(3);
+  const [agentGoal, setAgentGoal] = useState('');
+  const [agentTopK, setAgentTopK] = useState(5);
 
   // Check API health on mount
   useEffect(() => {
@@ -158,6 +160,12 @@ function App() {
             onClick={() => { setActiveTab('retrieve'); resetResults(); }}
           >
             📚 Retrieve Only
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'agent' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('agent'); resetResults(); }}
+          >
+            🧠 Agentic AI
           </button>
         </div>
 
@@ -322,6 +330,67 @@ function App() {
             </div>
           )}
 
+          {activeTab === 'agent' && (
+            <div>
+              <div className="section">
+                <h3>Agentic AI (Goal-driven)</h3>
+                <p>
+                  Give the agent a high-level goal. It can run a quick RAG evaluation,
+                  create a note, inspect the database, or search and summarize using
+                  the existing RAG pipeline.
+                </p>
+
+                <div className="input-group">
+                  <label htmlFor="agent-goal">Agent Goal:</label>
+                  <textarea
+                    id="agent-goal"
+                    value={agentGoal}
+                    onChange={(e) => setAgentGoal(e.target.value)}
+                    placeholder="Examples: \n- Run a quick evaluation of our RAG quality.\n- Summarize what we know about HelioScope.\n- Inspect what is stored in rag_db.passages."
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="input-group">
+                  <label htmlFor="agent-topk">Passages to retrieve for search/summarize (k):</label>
+                  <input
+                    id="agent-topk"
+                    type="number"
+                    value={agentTopK}
+                    onChange={(e) => setAgentTopK(parseInt(e.target.value) || 1)}
+                    min="1"
+                    max="10"
+                    disabled={loading}
+                  />
+                </div>
+
+                <button
+                  className="button"
+                  onClick={async () => {
+                    if (!agentGoal.trim()) {
+                      setError('Please enter an agent goal');
+                      return;
+                    }
+                    setLoading(true);
+                    setError(null);
+                    setResult(null);
+                    try {
+                      const response = await apiService.runAgent(agentGoal, agentTopK);
+                      setResult({ agent: response });
+                    } catch (err) {
+                      setError(`Agent request failed: ${err.message}`);
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  disabled={loading || !agentGoal.trim()}
+                >
+                  {loading ? 'Running Agent...' : 'Run Agent'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {loading && (
             <div className="loading">
               <div className="spinner"></div>
@@ -342,6 +411,14 @@ function App() {
                 <>
                   <h4>✨ Generated Answer</h4>
                   <div className="answer-text">{result.answer}</div>
+                </>
+              )}
+
+              {result.agent && (
+                <>
+                  <h4>🧠 Agent Result</h4>
+                  <p><strong>Mode:</strong> {result.agent.mode}</p>
+                  <div className="answer-text">{result.agent.answer}</div>
                 </>
               )}
 
