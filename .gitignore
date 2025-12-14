@@ -38,15 +38,28 @@ id_map.json
 evaluation_results.json
 
 # Models and data (keep dirs but ignore contents by default)
-models/*
+models/
 !models/.gitkeep
 
-data/docs/*
+data/docs/
 !data/docs/.gitkeep
+
+# Evaluation data
+data/eval/
+!data/eval/.gitkeep
 
 # Logs
 logs/
 *.log
+
+# React/Node
+web/node_modules/
+web/build/
+web/.env.local
+web/.env.*.local
+web/npm-debug.log*
+web/yarn-debug.log*
+web/yarn-error.log*
 
 # OS
 Thumbs.db

@@ -47,7 +47,65 @@ python src/rag_windows.py --query "example question"
 
 # (Optional) Retrieval-only test (no llama model needed)
 python src/rag_windows.py --retrieve-only "example question" --k 5
+
+## Full guide
+
+For a detailed, end-to-end explanation (architecture, setup, pipeline internals, tuning, troubleshooting), see:
+
+- docs/PROJECT_GUIDE.md
+
+## Ingestion module reference
+
+Extended ingestion supports txt, pdf (with OCR fallback), docx, csv, xlsx, json, xml, images (png/jpg/jpeg/tiff), Oracle DB rows, and external Mongo collections.
+See `docs/INGESTION_MODULE.md` for setup, optional dependencies, and examples.
+
+## REST API
+
+FastAPI server exposing all RAG capabilities via HTTP endpoints. See `docs/API_GUIDE.md` for setup and usage.
+
+Quick start:
+```powershell
+.\.venv\Scripts\uvicorn.exe src.api:app --host 0.0.0.0 --port 8000
+# API docs at http://localhost:8000/docs
 ```
+
+## Web UI
+
+React-based web interface for demos and presentations. See `docs/WEB_UI_GUIDE.md` for setup.
+
+Quick start:
+```powershell
+# Terminal 1: Start API server
+.\.venv\Scripts\uvicorn.exe src.api:app --host 0.0.0.0 --port 8000
+
+# Terminal 2: Start React dev server
+cd web
+npm install
+npm start
+# Web UI at http://localhost:3000
+```
+```
+
+## RAGAS Evaluation
+
+Evaluate your RAG pipeline using the RAGAS framework. See `docs/RAGAS_EVALUATION_GUIDE.md` for detailed information.
+
+Quick start:
+```powershell
+# Install evaluation dependencies
+pip install ragas datasets sentence-transformers
+
+# Run evaluation
+python src/evaluation.py --evaluate
+
+# Results saved to evaluation_results.json
+```
+
+RAGAS metrics measured:
+- **Faithfulness**: Is the answer grounded in the context?
+- **Answer Relevancy**: Does the answer address the question?
+- **Context Precision**: Are retrieved contexts relevant?
+- **Context Recall**: Do contexts contain needed information?
 
 Notes:
 - MongoDB must be installed and running locally at `mongodb://localhost:27017`.
