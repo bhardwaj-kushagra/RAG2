@@ -5,6 +5,7 @@ This guide explains how the project works end-to-end and how to run, extend, and
 ## What is RAG?
 
 Retrieval-Augmented Generation (RAG) combines information retrieval with a language model: it retrieves relevant passages from a knowledge base and uses them as grounded context for a generative model. Benefits include:
+
 - Better factual grounding versus pure LLM prompting
 - Integrating private/domain knowledge without retraining
 - Easy updates: add/modify docs and rebuild the index (no model finetuning)
@@ -12,6 +13,7 @@ Retrieval-Augmented Generation (RAG) combines information retrieval with a langu
 ## Architecture overview
 
 Components used in this project:
+
 - MongoDB (local): stores text passages
 - SentenceTransformers (all-MiniLM-L6-v2): computes dense vector embeddings
 - FAISS (CPU): similarity search over embeddings
@@ -19,7 +21,7 @@ Components used in this project:
 
 Data flow:
 
-```
+```text
 TXT files (data/docs/) --ingest--> MongoDB (rag_db.passages)
 MongoDB --build-index--> Embeddings (SentenceTransformers)
                       --> FAISS index (faiss.index)
@@ -29,6 +31,7 @@ Query --embed--> FAISS --top-K--> MongoDB texts --prompt--> llama.cpp --> Answer
 ```
 
 Key files:
+
 - `src/rag_windows.py`: main script with CLI
 - `data/docs/`: folder for your `.txt` documents
 - `models/model.gguf`: local llama model
@@ -45,6 +48,7 @@ Key files:
 ## Setup (Windows, PowerShell)
 
 Prerequisites:
+
 - MongoDB Community Server installed and running locally (default URI: `mongodb://localhost:27017`)
 - Python 3.10–3.11 recommended
 - VS Code (optional but recommended)
@@ -68,11 +72,12 @@ pip install sentence-transformers pymongo numpy tqdm faiss-cpu
 ```
 
 Place a local `.gguf` model at `models\model.gguf`. For testing on CPU, a small model like TinyLlama works:
-- Example (TinyLlama 1.1B Q4_K_M): https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF
+
+- Example (TinyLlama 1.1B Q4_K_M): [https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF](https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF)
 
 ## Project structure
 
-```
+```text
 project_root/
   data/docs/          # text files to ingest (you add files here)
   models/model.gguf   # local llama model (legacy default)
@@ -108,17 +113,20 @@ python src/rag_windows.py --query "Your question" --k 5
 ## Pipeline internals
 
 ### 1) Ingest: chunk and store
+
 - Reads `.txt` from `data/docs/`
 - Splits into 250-word chunks with 50-word overlap (simple word-based splitter)
 - Stores each chunk in MongoDB `rag_db.passages`
 - Each passage has a `source_id` like `filename.txt#chunk_index`
 
 Design notes:
+
 - Word-based chunking is simple and robust for plain text
 - Overlap helps preserve context across chunk boundaries
 - MongoDB is convenient for simple CRUD and scales locally
 
 ### 2) Build-index: embed and index
+
 - Loads all passages from MongoDB (`text`, `source_id`)
 - Encodes passages using `all-MiniLM-L6-v2`, normalized embeddings
 - Builds FAISS `IndexFlatIP` (inner product). With normalized vectors, IP ≈ cosine similarity
@@ -126,21 +134,25 @@ Design notes:
 - Saves `id_map.json` mapping FAISS index row -> `{ mongo_id, source_id }`
 
 Design notes:
+
 - IndexFlatIP is exact search; simple and good for small projects
 - Normalization enables cosine similarity without extra code
 - `id_map.json` ensures we can recover the associated Mongo doc quickly
 
 ### 3) Retrieve: top-K from FAISS
+
 - Encodes the query with the same embedder (normalized)
 - Searches FAISS for top-K neighbors
 - Uses `id_map.json` to fetch `text` + `source_id` from MongoDB
 - Prints the retrieved passages for transparency
 
 Design notes:
+
 - Using the same embedding model for queries and passages is essential
 - K is configurable; typical values 3–10
 
 ### 4) Generate: llama.cpp with citations
+
 - Builds a prompt with instructions to cite inline using `[source_id]`
 - Appends all contexts in blocks like:
   - `[filename.txt#i]:\n<chunk text>`
@@ -149,6 +161,7 @@ Design notes:
 - Appends a `Sources: [id] [id] ...` line to guarantee citations are shown
 
 Design notes:
+
 - The prompt strongly asks for inline citations, which helps but is model-dependent
 - A trailing Sources line ensures citations are never missing
 - CPU-only: `n_gpu_layers=0`, `n_threads` from CPU core count
@@ -156,6 +169,7 @@ Design notes:
 ## Error handling and logging
 
 The script prints clear logs at each stage:
+
 - Ingest: file reads, chunk counts, Mongo inserts
 - Index: model download, embedding, index write, id map write
 - Retrieve: top-K hits, previews
@@ -163,6 +177,7 @@ The script prints clear logs at each stage:
 - Missing Mongo/FAISS/model files produce readable error messages and exit codes
 
 Common messages you might see:
+
 - `Could not connect to MongoDB`: ensure service is running locally
 - `Missing LLM model file`: place a `.gguf` at `models/model.gguf` or use `--model-path`
 - `Missing FAISS index`: run `--build-index` after `--ingest`
