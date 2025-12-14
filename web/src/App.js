@@ -419,6 +419,18 @@ function App() {
                   <h4>🧠 Agent Result</h4>
                   <p><strong>Mode:</strong> {result.agent.mode}</p>
                   <div className="answer-text">{result.agent.answer}</div>
+
+                  {result.agent.passages && result.agent.passages.length > 0 && (
+                    <div className="passages">
+                      <h4>📚 Passages used by agent ({result.agent.passages.length})</h4>
+                      {result.agent.passages.map((passage, idx) => (
+                        <div key={idx} className="passage-item">
+                          <div className="passage-source">Source: {passage.source_id}</div>
+                          <div className="passage-text">{passage.text}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
 

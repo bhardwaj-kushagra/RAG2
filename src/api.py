@@ -96,6 +96,7 @@ class AgentResponse(BaseModel):
     goal: str
     mode: str
     answer: str
+    passages: Optional[List["PassageResponse"]] = None
 
 
 class PassageResponse(BaseModel):
@@ -324,7 +325,19 @@ async def api_agent(req: AgentRequest):
         else:
             mode = "search_summarize"
 
-        return AgentResponse(goal=goal, mode=mode, answer=answer)
+        # Optionally attach retrieved passages for transparency in the web UI
+        passages_payload: Optional[List[PassageResponse]] = None
+        if mode == "search_summarize":
+            try:
+                passages = retrieve(goal, top_k=req.top_k)
+                passages_payload = [
+                    PassageResponse(source_id=p.source_id, text=p.text) for p in passages
+                ]
+            except Exception as re_err:
+                # Log but don't fail the whole agent request
+                print(f"[api_agent] Failed to fetch passages for agent result: {re_err}", flush=True)
+
+        return AgentResponse(goal=goal, mode=mode, answer=answer, passages=passages_payload)
     except HTTPException:
         # Let FastAPI handle HTTP errors as-is
         raise
