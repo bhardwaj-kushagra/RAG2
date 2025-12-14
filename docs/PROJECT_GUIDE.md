@@ -75,7 +75,9 @@ Place a local `.gguf` model at `models\model.gguf`. For testing on CPU, a small 
 ```
 project_root/
   data/docs/          # text files to ingest (you add files here)
-  models/model.gguf   # local llama model
+  models/model.gguf   # local llama model (legacy default)
+  models/meta-llama-3.1-8b-instruct-q4_k_m.gguf  # recommended LLM (8B, Q4_K_M)
+  models/nomic-embed-text-v1.5.Q4_K_M.gguf       # recommended embedding model
   src/rag_windows.py  # main RAG script (CLI)
   faiss.index         # vector index (generated)
   id_map.json         # index position -> Mongo mapping (generated)
@@ -100,7 +102,7 @@ python src/rag_windows.py --query "Your question" --k 5
 
 # Options:
 # --k <int>        : number of passages to retrieve (default 5)
-# --model-path <p> : path to your .gguf (default models/model.gguf)
+# --model-path <p> : path to your LLM .gguf (default models/meta-llama-3.1-8b-instruct-q4_k_m.gguf)
 ```
 
 ## Pipeline internals
@@ -236,7 +238,13 @@ pip install sentence-transformers pymongo numpy tqdm faiss-cpu
 python src/rag_windows.py --ingest
 python src/rag_windows.py --build-index
 
-# Place a local .gguf at models\model.gguf (or pass --model-path)
+python download_embedding_model.py               # downloads nomic-embed-text-v1.5.Q4_K_M.gguf
+python download_llm_model.py                    # downloads meta-llama-3.1-8b-instruct-q4_k_m.gguf
+
+# Build index with the local embedding model
+python src/rag_windows.py --build-index --no-incremental
+
+# Ask a question using the local LLM
 python src/rag_windows.py --query "What is RAG?" --k 3
 ```
 

@@ -31,7 +31,7 @@ MODELS = {
         "url": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf",
         "size": "275MB",
         "dims": 768,
-        "description": "High quality embedding model optimized for search"
+        "description": "High quality embedding model optimized for search (recommended default)"
     },
     "all-minilm": {
         "name": "all-MiniLM-L6-v2.Q4_K_M.gguf",
@@ -73,9 +73,9 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="all-minilm",
+        default="nomic",
         choices=list(MODELS.keys()),
-        help="Which embedding model to download (default: all-minilm, smallest)"
+        help="Which embedding model to download (default: nomic, best quality), or choose all-minilm / bge-small"
     )
     parser.add_argument(
         "--force",

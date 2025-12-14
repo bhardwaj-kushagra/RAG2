@@ -79,7 +79,8 @@ EVAL_DATA_DIR = PROJECT_ROOT / "data" / "eval"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "evaluation_results.json"
 HUGGINGFACE_HOST = "huggingface.co"
 HUGGINGFACE_PORT = 443
-DEFAULT_EMBED_MODEL_PATH = PROJECT_ROOT / "models" / "all-MiniLM-L6-v2.Q4_K_M.gguf"
+# Default local embedding model for evaluation: nomic-embed-text-v1.5 Q4_K_M
+DEFAULT_EMBED_MODEL_PATH = PROJECT_ROOT / "models" / "nomic-embed-text-v1.5.Q4_K_M.gguf"
 
 
 def log(msg: str) -> None:
