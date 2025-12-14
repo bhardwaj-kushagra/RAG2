@@ -3,7 +3,7 @@
 A minimal Retrieval-Augmented Generation pipeline that runs fully locally on Windows using:
 
 - MongoDB Community Server (local)
-- SentenceTransformers (`all-MiniLM-L6-v2`) for embeddings
+- Local llama.cpp embeddings (default: `nomic-embed-text-v1.5.Q4_K_M.gguf`) with SentenceTransformers as a fallback
 - FAISS (`faiss-cpu`) for similarity search
 - `llama-cpp-python` with a local `.gguf` model for generation
 - **RAGAS** for RAG pipeline evaluation
@@ -16,9 +16,11 @@ No Docker, CPU-only, simple and lightweight.
 project_root/
   data/docs/                    # .txt files to ingest
   data/sample_eval_data.json    # sample data for RAGAS evaluation
-  models/model.gguf             # local llama model (place your model here)
+  models/model.gguf             # local Llama model (e.g., Meta-Llama-3.1-8B-Instruct GGUF)
+  models/nomic-embed-text-v1.5.Q4_K_M.gguf  # local embedding model (default)
   src/rag_windows.py            # main RAG script
   src/ragas_evaluator.py        # RAGAS evaluation module
+  src/agent.py                  # lightweight agent over RAG + DB tools
   tests/                        # test suite
   faiss.index                   # saved FAISS index (created by --build-index)
   id_map.json                   # FAISS -> Mongo mapping (created by --build-index)
@@ -36,17 +38,21 @@ pip install -r requirements.txt
 # 1) Put your .txt files into data\docs\
 python src/rag_windows.py --ingest
 
-# 2) Build the FAISS index
+# 2) Build the FAISS index (uses local nomic-embed-text-v1.5 GGUF for embeddings when available)
 python src/rag_windows.py --build-index
 
 # 3) Place a local .gguf model at models\model.gguf
 #    (or pass --model-path to point to your file)
 
-# 4) Ask a question
-python src/rag_windows.py --query "example question"
+# 4) Ask a question (streaming answer in CLI)
+python src/rag_windows.py --query "example question" --max-tokens 256
 
 # (Optional) Retrieval-only test (no llama model needed)
 python src/rag_windows.py --retrieve-only "example question" --k 5
+
+# 5) (Optional) Run agentic AI from CLI
+python src/rag_windows.py --agent "Run a quick evaluation of our RAG quality."
+python src/rag_windows.py --agent "Who is Dr. Aria Khatri?"
 
 ## Full guide
 
@@ -73,6 +79,13 @@ Quick start:
 
 React-based web interface for demos and presentations. See `docs/WEB_UI_GUIDE.md` for setup.
 
+The web UI exposes all major flows:
+- Ingest files (upload or from data/docs)
+- Build FAISS index
+- Query RAG (retrieve + generate)
+- Retrieve-only (no generation)
+- **Agentic AI tab** for goal-driven usage (evaluation, notes, DB inspection, search+summarize)
+
 Quick start:
 ```powershell
 # Terminal 1: Start API server
@@ -90,7 +103,11 @@ npm start
 
 Evaluate your RAG pipeline using the RAGAS framework. See `docs/RAGAS_EVALUATION_GUIDE.md` for detailed information.
 
-Quick start:
+There are two evaluation entrypoints:
+- `src/evaluation.py` – lightweight, dependency-minimal evaluation with deterministic/mock embeddings.
+- `src/ragas_evaluator.py` – full RAGAS integration that can use hosted models (e.g., via `OPENAI_API_KEY`).
+
+Quick start (lightweight evaluator):
 ```powershell
 # Install evaluation dependencies
 pip install ragas datasets sentence-transformers
@@ -111,11 +128,22 @@ Notes:
 - MongoDB must be installed and running locally at `mongodb://localhost:27017`.
 - The first time you run embedding it will download the model into the HF cache.
 
+You can also trigger evaluation via the agent:
+- Quick evaluation: `--agent "Run a quick evaluation of our RAG quality."`
+- Full RAGAS (when dependencies/API keys are available): `--agent "Run a full RAGAS evaluation of our RAG pipeline."`
+
 ## How it works
 
-- `--ingest`: reads `.txt` files in `data/docs/`, splits them into 250-word chunks with 50-word overlap, stores chunks in MongoDB (`rag_db.passages`).
-- `--build-index`: embeds all passages with `all-MiniLM-L6-v2`, normalizes embeddings, builds a FAISS IndexFlatIP (cosine similarity) and saves `faiss.index` and `id_map.json`.
-- `--query`: embeds the question, retrieves top-K passages from FAISS, fetches their text from MongoDB, and prompts the local llama.cpp model. The answer includes inline citations when possible and always appends a `Sources: [id] ...` line.
+- `--ingest`: reads supported files in `data/docs/`, splits them into chunks, stores chunks in MongoDB (`rag_db.passages`).
+- `--build-index`: embeds all passages with the local llama.cpp embedding model (`nomic-embed-text-v1.5.Q4_K_M.gguf` by default), normalizes embeddings, builds a FAISS IndexFlatIP (cosine similarity) and saves `faiss.index` and `id_map.json`.
+- `--query`: embeds the question, retrieves top-K passages from FAISS, fetches their text from MongoDB, and prompts the local llama.cpp model (e.g., Meta‑Llama‑3.1‑8B‑Instruct). The CLI supports streaming tokens and `--max-tokens` to cap response length; answers always include a `Sources: [id] ...` footer.
+- `--agent`: runs a lightweight agent over the RAG stack and MongoDB with several modes:
+  - quick evaluation: summarize RAG quality over sample data.
+  - full RAGAS: run the full RAGAS evaluator when configured.
+  - note-taking: store notes/goals in `rag_db.notes`.
+  - DB inspection: summarize sampled documents from `rag_db.passages`.
+  - search+summarize: retrieve passages and generate a concise summary.
+  - maintenance tools: rebuild the FAISS index, tag top-k passages, create eval samples.
 
 ## Options
 
