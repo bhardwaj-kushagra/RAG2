@@ -45,7 +45,8 @@ except Exception:
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data" / "docs"
 MODELS_DIR = PROJECT_ROOT / "models"
-DEFAULT_MODEL_PATH = MODELS_DIR / "model.gguf"
+# Default to the bundled quantized Llama 3.1 instruct model shipped in models/
+DEFAULT_MODEL_PATH = MODELS_DIR / "meta-llama-3.1-8b-instruct-q4_k_m.gguf"
 FAISS_INDEX_PATH = PROJECT_ROOT / "faiss.index"
 ID_MAP_PATH = PROJECT_ROOT / "id_map.json"
 
