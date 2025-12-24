@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -45,8 +46,14 @@ except Exception:
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data" / "docs"
 MODELS_DIR = PROJECT_ROOT / "models"
-# Default to the bundled quantized Llama 3.1 instruct model shipped in models/
-DEFAULT_MODEL_PATH = MODELS_DIR / "meta-llama-3.1-8b-instruct-q4_k_m.gguf"
+# Default to a fast 3B model for CPU-only laptops.
+# Download it once via: python download_llm_model.py
+DEFAULT_MODEL_PATH = MODELS_DIR / "qwen2.5-3b-instruct-q4_k_m.gguf"
+
+# Generation defaults tuned for CPU-only hardware
+DEFAULT_LLM_N_CTX = int(os.getenv("LLM_N_CTX", "2048"))
+DEFAULT_LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "128"))
+DEFAULT_LLM_N_BATCH = int(os.getenv("LLM_N_BATCH", "256"))
 FAISS_INDEX_PATH = PROJECT_ROOT / "faiss.index"
 ID_MAP_PATH = PROJECT_ROOT / "id_map.json"
 
@@ -635,7 +642,8 @@ def retrieve(query: str, top_k: int = 5) -> List[Passage]:
 
 # --- Generation with llama-cpp-python ---
 
-def _load_llm(model_path: Path, n_ctx: int = 4096) -> Any:
+def _load_llm(model_path: Path, n_ctx: int = DEFAULT_LLM_N_CTX) -> Any:
+    global _CACHED_LLM
     if Llama is None:
         log("[error] llama-cpp-python not installed or failed to import. Install via: pip install llama-cpp-python")
         sys.exit(11)
@@ -644,19 +652,46 @@ def _load_llm(model_path: Path, n_ctx: int = 4096) -> Any:
         log("        Place a compatible .gguf model at that path, e.g., models/model.gguf")
         sys.exit(12)
 
+    # Reuse the loaded model across requests (important for FastAPI/web UI).
+    # This keeps the first call slow (initial load) but makes subsequent calls much faster.
+    with _CACHED_LLM_LOCK:
+        if _CACHED_LLM is not None:
+            cached_path, cached_ctx, cached_batch, cached_threads, cached_llm = _CACHED_LLM
+            if (
+                cached_llm is not None
+                and cached_path == model_path.resolve()
+                and cached_ctx == int(n_ctx)
+                and cached_batch == int(DEFAULT_LLM_N_BATCH)
+                and cached_threads == (os.cpu_count() or 4)
+            ):
+                return cached_llm
+
     log(f"[generate] Loading llama.cpp model: {model_path} (CPU-only) ...")
     try:
         llm = Llama(
             model_path=str(model_path),
             n_ctx=n_ctx,
             n_threads=os.cpu_count() or 4,
+            n_batch=DEFAULT_LLM_N_BATCH,
             n_gpu_layers=0,  # CPU-only
             verbose=False,
         )
+        with _CACHED_LLM_LOCK:
+            _CACHED_LLM = (
+                model_path.resolve(),
+                int(n_ctx),
+                int(DEFAULT_LLM_N_BATCH),
+                (os.cpu_count() or 4),
+                llm,
+            )
         return llm
     except Exception as e:
         log(f"[error] Failed to load llama model: {e}")
         sys.exit(13)
+
+
+_CACHED_LLM_LOCK = threading.Lock()
+_CACHED_LLM: Optional[tuple[Path, int, int, int, Any]] = None
 
 
 def build_prompt(question: str, contexts: List[Passage]) -> str:
@@ -682,7 +717,7 @@ def generate_answer(
     question: str,
     contexts: List[Passage],
     model_path: Path,
-    max_tokens: int = 256,
+    max_tokens: int = DEFAULT_LLM_MAX_TOKENS,
     stream_to_stdout: bool = False,
 ) -> str:
     """Generate an answer from the LLM.
@@ -694,7 +729,7 @@ def generate_answer(
     as they are generated (useful for CLI); the full text is still
     returned for callers that need it.
     """
-    llm = _load_llm(model_path)
+    llm = _load_llm(model_path, n_ctx=DEFAULT_LLM_N_CTX)
     prompt = build_prompt(question, contexts)
 
     effective_max_tokens = max(16, int(max_tokens) if max_tokens else 256)

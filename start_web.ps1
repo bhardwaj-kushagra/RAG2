@@ -43,10 +43,19 @@ Write-Host "Press Ctrl+C to stop both servers" -ForegroundColor Yellow
 Write-Host ""
 Start-Sleep -Seconds 2
 
+# CPU-friendly defaults for local generation (override by setting these in your shell before running)
+if (-Not $env:LLM_N_CTX) { $env:LLM_N_CTX = "2048" }
+if (-Not $env:LLM_MAX_TOKENS) { $env:LLM_MAX_TOKENS = "128" }
+if (-Not $env:LLM_N_BATCH) { $env:LLM_N_BATCH = "256" }
+Write-Host "[LLM] Using defaults: LLM_N_CTX=$($env:LLM_N_CTX) LLM_MAX_TOKENS=$($env:LLM_MAX_TOKENS) LLM_N_BATCH=$($env:LLM_N_BATCH)" -ForegroundColor DarkGray
+
 # Start API server in background
 Write-Host "[API] Starting FastAPI server..." -ForegroundColor Blue
 $apiJob = Start-Job -ScriptBlock {
     Set-Location $using:PWD
+    if (-Not $env:LLM_N_CTX) { $env:LLM_N_CTX = "2048" }
+    if (-Not $env:LLM_MAX_TOKENS) { $env:LLM_MAX_TOKENS = "128" }
+    if (-Not $env:LLM_N_BATCH) { $env:LLM_N_BATCH = "256" }
     & .\.venv\Scripts\uvicorn.exe src.api:app --host 0.0.0.0 --port 8000
 }
 

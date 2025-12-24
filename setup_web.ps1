@@ -79,6 +79,8 @@ Write-Host ""
 Write-Host "To start the RAG web UI:" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "1. Start API server (Terminal 1):" -ForegroundColor White
+Write-Host "   # Optional (recommended on CPU laptops):" -ForegroundColor Gray
+Write-Host "   #   $env:LLM_N_CTX=2048; $env:LLM_MAX_TOKENS=128; $env:LLM_N_BATCH=256" -ForegroundColor Gray
 Write-Host "   .\.venv\Scripts\uvicorn.exe src.api:app --host 0.0.0.0 --port 8000" -ForegroundColor Gray
 Write-Host ""
 Write-Host "2. Start React dev server (Terminal 2):" -ForegroundColor White

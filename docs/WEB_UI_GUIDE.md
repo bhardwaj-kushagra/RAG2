@@ -24,6 +24,9 @@ In PowerShell, from the project root:
 # Activate virtual environment
 .\.venv\Scripts\Activate.ps1
 
+# Recommended CPU defaults (optional):
+#   $env:LLM_N_CTX=2048; $env:LLM_MAX_TOKENS=128; $env:LLM_N_BATCH=256
+
 # Start API server on port 8000
 .\.venv\Scripts\uvicorn.exe src.api:app --host 0.0.0.0 --port 8000
 ```

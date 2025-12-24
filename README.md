@@ -16,7 +16,7 @@ No Docker, CPU-only, simple and lightweight.
 project_root/
   data/docs/                    # .txt files to ingest
   data/sample_eval_data.json    # sample data for RAGAS evaluation
-  models/model.gguf             # local Llama model (e.g., Meta-Llama-3.1-8B-Instruct GGUF)
+  models/qwen2.5-3b-instruct-q4_k_m.gguf  # local LLM for generation (download via download_llm_model.py)
   models/nomic-embed-text-v1.5.Q4_K_M.gguf  # local embedding model (default)
   src/rag_windows.py            # main RAG script
   src/ragas_evaluator.py        # RAGAS evaluation module
@@ -41,11 +41,11 @@ python src/rag_windows.py --ingest
 # 2) Build the FAISS index (uses local nomic-embed-text-v1.5 GGUF for embeddings when available)
 python src/rag_windows.py --build-index
 
-# 3) Place a local .gguf model at models\model.gguf
-#    (or pass --model-path to point to your file)
+# 3) Download a local .gguf model for generation
+python download_llm_model.py
 
 # 4) Ask a question (streaming answer in CLI)
-python src/rag_windows.py --query "example question" --max-tokens 256
+python src/rag_windows.py --query "example question" --max-tokens 128
 
 # (Optional) Retrieval-only test (no llama model needed)
 python src/rag_windows.py --retrieve-only "example question" --k 5

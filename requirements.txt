@@ -5,6 +5,9 @@ sentence-transformers
 numpy
 llama-cpp-python
 
+# Model download helper (keep compatible with transformers/sentence-transformers)
+huggingface_hub>=0.34.0,<1.0
+
 # Evaluation (RAGAS)
 ragas
 datasets

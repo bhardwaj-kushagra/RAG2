@@ -1,104 +1,85 @@
-#!/usr/bin/env python3
+"""Download a suitable local GGUF LLM for generation.
+
+This project is designed to run fully local. This script downloads a single
+quantized GGUF file into the ./models folder.
+
+Run:
+  python download_llm_model.py
+
+It will download:
+  Qwen/Qwen2.5-3B-Instruct-GGUF - qwen2.5-3b-instruct-q4_k_m.gguf
+
+Notes:
+- Requires an internet connection *only while downloading*.
+- After download, the API/CLI runs fully offline.
 """
-Download a local LLM model in GGUF format for generation/agent.
 
-This script downloads Meta-Llama-3.1-8B-Instruct (Q4_K_M quantized) which is:
-- Strong instruction-following model for chat and simple agents
-- Reasonable size for local CPU inference (quantized)
+from __future__ import annotations
 
-Usage:
-    python download_llm_model.py
-    python download_llm_model.py --force
-
-After download, it will be stored in the models/ directory and used by default
-via DEFAULT_MODEL_PATH in src/rag_windows.py.
-"""
-import argparse
+import os
 import sys
+import time
 from pathlib import Path
-from urllib.request import urlretrieve
-from tqdm import tqdm
-
-PROJECT_ROOT = Path(__file__).resolve().parent
-MODELS_DIR = PROJECT_ROOT / "models"
-
-LLM_MODEL = {
-    "name": "meta-llama-3.1-8b-instruct-q4_k_m.gguf",
-    "url": "https://huggingface.co/joshnader/Meta-Llama-3.1-8B-Instruct-Q4_K_M-GGUF/resolve/main/meta-llama-3.1-8b-instruct-q4_k_m.gguf",
-    "size": "~5-6GB (approx)",
-    "description": "Meta-Llama-3.1-8B-Instruct Q4_K_M for local chat/agent use",
-}
 
 
-class DownloadProgressBar(tqdm):
-    def update_to(self, b=1, bsize=1, tsize=None):
-        if tsize is not None:
-            self.total = tsize
-        self.update(b * bsize - self.n)
-
-
-def download_file(url: str, output_path: Path):
-    """Download file with progress bar."""
-    print(f"Downloading from: {url}")
-    print(f"Saving to: {output_path}")
-
-    with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc=output_path.name) as t:
-        urlretrieve(url, filename=output_path, reporthook=t.update_to)
-
-    print(f"\u2713 Downloaded successfully: {output_path}")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Download local LLM model (Meta-Llama-3.1-8B-Instruct Q4_K_M)")
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Force re-download even if file exists",
-    )
-    args = parser.parse_args()
-
-    model_name = LLM_MODEL["name"]
-    model_url = LLM_MODEL["url"]
-
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = MODELS_DIR / model_name
-
-    if output_path.exists() and not args.force:
-        print(f"\u2713 LLM model already exists: {output_path}")
-        print(f"  Size: {output_path.stat().st_size / (1024*1024*1024):.2f} GB")
-        print("  Use --force to re-download")
-        print("\nTo use this model (already wired as default):")
-        print(f"  python src/rag_windows.py --query \"What is FAISS?\" --model-path \"{output_path}\"")
-        return
-
-    print("=" * 60)
-    print("Downloading LLM Model: Meta-Llama-3.1-8B-Instruct-Q4_K_M")
-    print("=" * 60)
-    print(f"Model: {model_name}")
-    print(f"Size: {LLM_MODEL['size']}")
-    print(f"Description: {LLM_MODEL['description']}")
-    print("=" * 60)
-    print()
-
+def main() -> int:
     try:
-        download_file(model_url, output_path)
+        from huggingface_hub import hf_hub_download  # type: ignore
+    except Exception:
+        print("[error] Missing dependency: huggingface_hub", file=sys.stderr)
+        print("        Install it via: pip install -U huggingface_hub", file=sys.stderr)
+        return 2
 
-        print()
-        print("=" * 60)
-        print("SUCCESS! LLM model ready to use")
-        print("=" * 60)
-        print(f"Model location: {output_path}")
-        print()
-        print("Next steps:")
-        print(f"  1. Ask a question: python src/rag_windows.py --query \"What is FAISS?\" --model-path \"{output_path}\"")
-        print("  2. Use the agent:  python src/rag_windows.py --agent \"Run a quick evaluation of our RAG quality.\" --model-path \"{output_path}\"")
-    except Exception as e:
-        print(f"\n\u2717 Download failed: {e}", file=sys.stderr)
-        print("\nTroubleshooting:")
-        print("  - Check your internet connection")
-        print("  - Verify the URL is accessible")
-        sys.exit(1)
+    # Hugging Face increasingly serves large files via XET/CAS. On some networks this
+    # can be flaky. Default to classic HTTP unless the user explicitly enables XET.
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
+    project_root = Path(__file__).resolve().parent
+    models_dir = project_root / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    repo_id = "Qwen/Qwen2.5-3B-Instruct-GGUF"
+    filename = "qwen2.5-3b-instruct-q4_k_m.gguf"
+    dest_path = models_dir / filename
+
+    if dest_path.exists() and dest_path.stat().st_size > 0:
+        print(f"[ok] Model already present: {dest_path}")
+        return 0
+
+    print("[download] Downloading GGUF model...")
+    print(f"           repo: {repo_id}")
+    print(f"           file: {filename}")
+
+    attempts = int(os.getenv("HF_DOWNLOAD_ATTEMPTS", "8"))
+    base_sleep_s = float(os.getenv("HF_DOWNLOAD_BACKOFF_SECONDS", "3"))
+
+    last_err: Exception | None = None
+    for i in range(1, attempts + 1):
+        try:
+            downloaded_path = hf_hub_download(
+                repo_id=repo_id,
+                filename=filename,
+                local_dir=str(models_dir),
+            )
+            print(f"[ok] Downloaded -> {downloaded_path}")
+            return 0
+        except Exception as e:
+            last_err = e
+            print(f"[warn] Attempt {i}/{attempts} failed: {e}", file=sys.stderr)
+            if i < attempts:
+                sleep_s = base_sleep_s * (2 ** (i - 1))
+                print(f"       Retrying in {sleep_s:.1f}s...", file=sys.stderr)
+                time.sleep(sleep_s)
+
+    print("[error] Download failed after multiple attempts.", file=sys.stderr)
+    print("        Tips:", file=sys.stderr)
+    print("        - Try a different network (CAS/CDN can be flaky)", file=sys.stderr)
+    print("        - Ensure HF_HUB_DISABLE_XET=1 (this script sets it by default)", file=sys.stderr)
+    print("        - You can increase retries: set HF_DOWNLOAD_ATTEMPTS=12", file=sys.stderr)
+    if last_err is not None:
+        print(f"        Last error: {last_err}", file=sys.stderr)
+    return 3
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -84,6 +84,7 @@ class QueryRequest(BaseModel):
     query: str = Field(..., description="Question text")
     top_k: int = Field(default=5, ge=1, le=100, description="Number of passages to retrieve")
     model_path: Optional[str] = Field(default=None, description="Path to .gguf model (optional)")
+    max_tokens: Optional[int] = Field(default=None, ge=16, le=1024, description="Max new tokens to generate (optional)")
 
 
 class AgentRequest(BaseModel):
@@ -264,7 +265,7 @@ async def api_query(req: QueryRequest):
 
         model_path = Path(req.model_path) if req.model_path else DEFAULT_MODEL_PATH
         # Use non-streaming generation for HTTP API
-        answer = generate_answer(req.query, passages, model_path)
+        answer = generate_answer(req.query, passages, model_path, max_tokens=req.max_tokens or 0)
 
         # Extract sources
         sources = list({p.source_id for p in passages})
